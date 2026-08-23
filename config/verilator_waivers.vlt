@@ -1,0 +1,40 @@
+`verilator_config
+// -----------------------------------------------------------------------------
+// Documented Verilator warning waivers. Policy: no global suppression —
+// every entry names the file/pattern, the observed message, and why it is
+// benign. Remove an entry and re-lint to re-audit it.
+// -----------------------------------------------------------------------------
+
+// [upstream dependency: common_cells/rr_arb_tree.sv]
+// "assert (NumIn)" uses a 32-bit parameter as a boolean; upstream style.
+lint_off -rule WIDTHTRUNC -file "*/common_cells*/src/rr_arb_tree.sv"
+// "(i > rr_q)" genvar comparison constant under this parameterization.
+lint_off -rule UNSIGNED   -file "*/common_cells*/src/rr_arb_tree.sv"
+
+// [upstream dependency: axi/axi_pkg.sv]
+// Width-extending arithmetic in beat-address helper functions; upstream
+// constant math, not reachable from the router datapath.
+lint_off -rule WIDTHEXPAND -file "*/axi-*/src/axi_pkg.sv"
+
+// [core FlooNoC DUT RTL: floo_router.sv]
+// NoLoopback assertion compares 1-bit hdr.collective_op against the 4-bit
+// Unicast enum literal (0). Zero-extension makes the comparison correct.
+lint_off -rule WIDTHEXPAND -file "*/floonoc/hw/floo_router.sv"
+
+// [core FlooNoC DUT RTL: floo_output_arbiter.sv]
+// "i < NumParallelRedRoutes" is constant-false with reductions disabled
+// (NumParallelRedRoutes == 0); loop body correctly unreachable.
+lint_off -rule UNSIGNED -file "*/floonoc/hw/floo_output_arbiter.sv"
+
+// [UVM 1800.2-2017 library]
+// The UVM base-class library is not Verilator-lint-clean; it is a pinned,
+// unmodified third-party dependency. Scoped to the UVM source tree only.
+lint_off -file "*/uvm*/src/*"
+
+// [UVM macro expansions inside local TB code]
+// `uvm_info/`uvm_error expand to "if (uvm_report_enabled(...))" where the
+// function returns int; and randomize() returns int used in boolean
+// context. Both are UVM API signatures, not local bugs. Matched narrowly
+// on the message content so genuine width bugs in TB code still surface.
+lint_off -rule WIDTHTRUNC -file "*tb/*" -match "*uvm_report_enabled*"
+lint_off -rule WIDTHTRUNC -file "*tb/*" -match "*METHODCALL 'randomize'*"

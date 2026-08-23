@@ -1,0 +1,24 @@
+# FlooNoC hw/ files required by the floo_router DUT scope, in compile order.
+# Consumed by scripts/bender_sources.sh (names are resolved against the
+# bender-emitted flist, so paths stay pinned to the vendored checkout).
+#
+# Justification per file (see docs/dut_scope.md):
+#   floo_pkg.sv           - root package (enums, cfg structs, helper functions)
+#   floo_route_select.sv  - per-input route computation (XY rule lives here)
+#   floo_route_xymask.sv  - multicast mask helper; only elaborated when
+#                           collectives are enabled, included for completeness
+#   floo_vc_arbiter.sv    - output VC arbiter (passthrough at NumVirtChannels=1)
+#   floo_wormhole_arbiter.sv - per-output packet arbiter
+#   floo_output_arbiter.sv   - output stage wrapper (wormhole + reduction mux)
+#   floo_router.sv        - the DUT
+#
+# Intentionally excluded (docs/dut_scope.md "Excluded upstream files"):
+#   chimneys, reorder buffers, CDC, meta buffer, reduction unit/arbiter/alu,
+#   nw wrappers, hw/tb/*, hw/test/*, hw/synth/*, hw/deprecated/*
+floo_pkg.sv
+floo_route_select.sv
+floo_route_xymask.sv
+floo_vc_arbiter.sv
+floo_wormhole_arbiter.sv
+floo_output_arbiter.sv
+floo_router.sv

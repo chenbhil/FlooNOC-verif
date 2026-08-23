@@ -1,0 +1,17 @@
+`verilator_config
+// -----------------------------------------------------------------------------
+// Code-coverage scope: line coverage is meant to measure the DUT, not the
+// verification environment. Without this, --coverage-line instruments the
+// entire UVM library (~100k lines) and the TB classes, drowning the DUT
+// numbers. Functional (covergroup) and SVA (user) coverage are unaffected —
+// they only exist where explicitly written.
+// -----------------------------------------------------------------------------
+
+// UVM 1800.2-2017 base-class library: third-party VIP, not a coverage target
+coverage_off -file "*/uvm*/src/*"
+
+// Local testbench (classes, interface, tb_top): environment, not DUT
+coverage_off -file "*tb/*"
+
+// Kept IN scope: rtl_or_vendor/floonoc/hw/* and its instantiated
+// common_cells/axi_pkg dependency closure — that is the DUT.

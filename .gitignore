@@ -1,0 +1,17 @@
+# Generated outputs
+build/
+logs/
+waves/
+
+# Pinned upstream checkouts (fetched by `make setup` at pinned revisions)
+rtl_or_vendor/floonoc/
+rtl_or_vendor/uvm/
+
+# Editor / OS
+.DS_Store
+*~
+.vscode/
+.idea/
+
+# Local agent notes (machine-specific, not part of the bench)
+CLAUDE.md
