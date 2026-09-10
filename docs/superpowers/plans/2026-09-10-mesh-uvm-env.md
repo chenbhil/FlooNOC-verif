@@ -174,6 +174,19 @@ bench on xezim checks the tie-offs before filing a simulator bug. There is no
 `check-mesh-x` gate; the full-regression gate and Done criteria are unchanged
 from the original plan apart from `run-mesh` now sweeping 12 pairs.
 
+**A6 — Task 2's verification grep was wrong (found during execution).** The
+original Step 3 check was a plain substring grep for `FLOO_VERIF_[A-Z_]*`
+minus the `MESH_` ones. That reports a *failure on a correct implementation*,
+because the header comment the same step prescribes deliberately names the
+old macros in prose to explain why the rename matters. Corrected in Task 2 to
+match only backtick-prefixed defines and uses, and paired with a `comm -12`
+over the two headers' `` `define`` names — which asserts the property the task
+actually exists for (no shared names) rather than the proxy for it.
+
+The general lesson, worth applying to the remaining tasks' verification
+steps: assert the *property*, not a text pattern that happens to correlate
+with it. A check that fails on correct work trains people to ignore it.
+
 ---
 
 ## File structure
@@ -660,12 +673,27 @@ In `tb/pkg/floo_tb_mesh_types_pkg.sv`, replace the localparam/typedef block (cur
 
 - [ ] **Step 3: Prove no old macro name survives in mesh files**
 
+Match only actual `` `define``s and macro *uses* (backtick-prefixed). A plain
+substring grep gives a false failure here, because the header comment above
+deliberately names the old macros in prose to explain the rename:
+
 ```bash
-grep -rn 'FLOO_VERIF_[A-Z_]*' config/dut_config_mesh.svh tb/pkg/floo_tb_mesh_types_pkg.sv \
-  | grep -v 'FLOO_VERIF_MESH_' | grep -v 'FLOO_VERIF_DUT_CONFIG_MESH_SVH_'
+grep -rnE '`(define[[:space:]]+)?FLOO_VERIF_(NUM_PORTS|FLIT_DATA_W|X_BITS|Y_BITS|PORT_ID_BITS|IN_FIFO_DEPTH|OUT_FIFO_DEPTH)\b' \
+  config/dut_config_mesh.svh tb/pkg/floo_tb_mesh_types_pkg.sv
 ```
 
-Expected: **no output** (exit status 1).
+Expected: **no output**.
+
+Then assert the thing this task actually exists for — that the two headers
+now share no macro name at all, so an order-dependent redefinition is
+impossible rather than merely unlikely:
+
+```bash
+comm -12 <(grep -oE '^`define[[:space:]]+[A-Z_]+' config/dut_config.svh      | awk '{print $2}' | sort -u) \
+         <(grep -oE '^`define[[:space:]]+[A-Z_]+' config/dut_config_mesh.svh | awk '{print $2}' | sort -u)
+```
+
+Expected: **no output**. Anything listed here is a Critical finding.
 
 - [ ] **Step 4: Verify both benches still pass**
 
