@@ -15,6 +15,7 @@
 #   make lint-mesh-uvm - fast compile-check of the mesh UVM classes, no top
 #   make build-mesh - compile the mesh bench (own top module, own obj dir)
 #   make run-mesh   - run the mesh UVM smoke test (expects PASS)
+#   make cov-mesh   - annotated mesh coverage report (logs/coverage_report_mesh/)
 # -----------------------------------------------------------------------------
 
 # --- Pinned revisions ----------------------------------------------------------
@@ -29,7 +30,7 @@ export REQUIRED_VERILATOR ?= 5.052
 
 FLOONOC_DIR := rtl_or_vendor/floonoc
 
-.PHONY: all setup sources lint build build-vcd run run-negative waves waves-vcd cov clean doctor lint-mesh lint-mesh-uvm build-mesh run-mesh
+.PHONY: all setup sources lint build build-vcd run run-negative waves waves-vcd cov clean doctor lint-mesh lint-mesh-uvm build-mesh run-mesh cov-mesh
 
 all: build
 
@@ -82,6 +83,23 @@ build-mesh: build/sources.f
 
 run-mesh:
 	./scripts/run_verilator.sh run-mesh
+
+# Mesh coverage report. Same three-way split as `make cov`, over the mesh
+# bench's own coverage file so the two benches' numbers never conflate.
+cov-mesh:
+	@mkdir -p logs/coverage_report_mesh
+	@{ \
+	  echo "=== FUNCTIONAL coverage (covergroups) ==="; \
+	  verilator_coverage --filter-type covergroup --report summary,hier logs/coverage_mesh.dat; \
+	  echo; \
+	  echo "=== ASSERTION coverage (SVA cover points) ==="; \
+	  verilator_coverage --filter-type user --report summary,hier logs/coverage_mesh.dat; \
+	  echo; \
+	  echo "=== CODE coverage (DUT line coverage) ==="; \
+	  verilator_coverage --filter-type line --report summary logs/coverage_mesh.dat; \
+	} | tee logs/coverage_summary_mesh.log
+	@verilator_coverage --annotate logs/coverage_report_mesh logs/coverage_mesh.dat > /dev/null
+	@echo "[cov-mesh] split summary: logs/coverage_summary_mesh.log; annotated source: logs/coverage_report_mesh/"
 
 waves:
 	./scripts/run_verilator.sh waves

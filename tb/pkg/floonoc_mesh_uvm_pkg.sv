@@ -28,6 +28,7 @@ package floonoc_mesh_uvm_pkg;
   `include "floonoc_mesh_monitor.sv"
   `include "floonoc_mesh_agent.sv"
   `include "floonoc_mesh_scoreboard.sv"
+  `include "floonoc_mesh_cov.sv"
   `include "floonoc_mesh_env.sv"
   `include "floonoc_mesh_smoke_test.sv"
 

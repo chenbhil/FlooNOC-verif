@@ -1,6 +1,5 @@
 // -----------------------------------------------------------------------------
-// Mesh environment: one active agent and the scoreboard.
-// (Coverage collector is added in a follow-up commit.)
+// Mesh environment: one active agent, scoreboard, coverage collector.
 //
 // Note which port feeds the scoreboard's expectation side: the DRIVER's
 // sent_ap (the original sequence item, cloned, published once the input
@@ -21,6 +20,7 @@ class floonoc_mesh_env extends uvm_env;
 
   floonoc_mesh_agent      agent;
   floonoc_mesh_scoreboard sb;
+  floonoc_mesh_cov        cov;
 
   function new(string name, uvm_component parent);
     super.new(name, parent);
@@ -30,12 +30,14 @@ class floonoc_mesh_env extends uvm_env;
     super.build_phase(phase);
     agent = floonoc_mesh_agent::type_id::create("agent", this);
     sb    = floonoc_mesh_scoreboard::type_id::create("sb", this);
+    cov   = floonoc_mesh_cov::type_id::create("cov", this);
   endfunction
 
   virtual function void connect_phase(uvm_phase phase);
     super.connect_phase(phase);
     agent.drv.sent_ap.connect(sb.in_imp);
     agent.mon.out_ap.connect(sb.out_imp);
+    agent.mon.out_ap.connect(cov.analysis_export);
   endfunction
 
 endclass : floonoc_mesh_env
