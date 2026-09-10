@@ -187,6 +187,34 @@ The general lesson, worth applying to the remaining tasks' verification
 steps: assert the *property*, not a text pattern that happens to correlate
 with it. A check that fails on correct work trains people to ignore it.
 
+**A7 — carry-forwards from Task 2's review.**
+
+*For Task 8 (it rewrites `tb/top/tb_top_mesh.sv`):* that file's header and the
+inline comment near its imports (`:6-11`, `:22-25`, `:32-39`) do not merely go
+stale after Task 2 — line 35 becomes **factually wrong**. It warns that
+importing `floonoc_uvm_pkg` would redefine `dut_config_mesh.svh`'s
+`X_BITS`/`Y_BITS` by macro collision. After the rename those are
+`FLOO_VERIF_MESH_X_BITS`/`_Y_BITS` and collide with nothing. The *caution* is
+still correct — do not import both packages into one scope — but the
+mechanism moved (see below). Fix the reasoning, not just the wording, because
+a Task 8 author reads exactly this comment when deciding what `tb_top_mesh`
+may safely import, and could reasonably conclude the rename already handled
+it.
+
+*The real remaining hazard, for Task 13's docs:* `floo_tb_types_pkg` and
+`floo_tb_mesh_types_pkg` both export `NumPorts`, `FlitDataW`, `InFifoDepth`,
+`OutFifoDepth`, `x_bits_t`, `y_bits_t`, `port_id_t`, `payload_t`, `flit_t`,
+`xy_id_t`, `hdr_t` and `dir_name`. A file doing
+`import floo_tb_types_pkg::*; import floo_tb_mesh_types_pkg::*;` in one scope
+gets a **compile-time ambiguity error** on any unqualified use — loud, at
+compile time, naming the exact symbol. That is a much safer failure mode than
+the silent macro substitution Task 2 closed, and it is self-defending, so it
+is a documentation item and not a gap. No file currently imports both.
+
+*Also for Task 13:* record the `FLOO_VERIF_<BENCH>_*` macro-namespacing
+convention somewhere a future third bench will find it — A5's
+`known_issues.md` rows do not cover it.
+
 ---
 
 ## File structure
