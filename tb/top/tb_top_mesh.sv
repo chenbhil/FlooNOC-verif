@@ -53,112 +53,33 @@ module tb_top_mesh;
   end
 
   // ---------------------------------------------------------------------------
-  // Interface (Eject ports only) + per-router DUT port arrays
+  // Interface (Eject ports only) + mesh DUT
+  //
+  // The mesh RTL itself lives in tb/top/floonoc_mesh_dut.sv so it can be
+  // linted with no TB attached (make lint-mesh). Local nets sit between the
+  // DUT's outputs and the interface variables, matching tb_top.sv's
+  // gen_if_map pattern.
   // ---------------------------------------------------------------------------
   floonoc_mesh_if rif (.clk(clk), .rst_n(rst_n));
 
-  // Per-router [port][virt_channel] arrays (NumVirtChannels == 1), same
-  // shape as the single-router bench, one set per router.
-  logic  [NumRouters-1:0][NumPorts-1:0][0:0] dut_valid_in, dut_ready_in;
-  logic  [NumRouters-1:0][NumPorts-1:0][0:0] dut_valid_out, dut_ready_out;
-  flit_t [NumRouters-1:0][NumPorts-1:0][0:0] dut_data_in, dut_data_out;
+  logic  [NumRouters-1:0] mesh_ready_in;
+  logic  [NumRouters-1:0] mesh_valid_out;
+  flit_t [NumRouters-1:0] mesh_data_out;
 
-  // Eject port (index 4) <-> the mesh interface, one per router.
-  for (genvar r = 0; r < NumRouters; r++) begin : gen_eject_map
-    assign dut_valid_in[r][Eject][0]  = rif.valid_in[r];
-    assign rif.ready_in[r]            = dut_ready_in[r][Eject][0];
-    assign dut_data_in[r][Eject][0]   = rif.data_in[r];
-    assign rif.valid_out[r]           = dut_valid_out[r][Eject][0];
-    assign dut_ready_out[r][Eject][0] = rif.ready_out[r];
-    assign rif.data_out[r]            = dut_data_out[r][Eject][0];
-  end
+  floonoc_mesh_dut i_mesh (
+    .clk_i   ( clk              ),
+    .rst_ni  ( rst_n            ),
+    .valid_i ( rif.valid_in     ),
+    .ready_o ( mesh_ready_in    ),
+    .data_i  ( rif.data_in      ),
+    .valid_o ( mesh_valid_out   ),
+    .ready_i ( rif.ready_out    ),
+    .data_o  ( mesh_data_out    )
+  );
 
-  // ---------------------------------------------------------------------------
-  // Inter-router mesh wiring (North/East/South/West).
-  //
-  // For router r, direction dir, with neighbor n = neighbor_idx(r, dir) and
-  // opp = opposite_dir(dir): the link between r and n is two independent
-  // channels sharing the same port pair —
-  //   r.valid_o[dir]/data_o[dir]  -> n.valid_i[opp]/data_i[opp], gated by
-  //   n.ready_o[opp]              -> r.ready_i[dir]
-  // Looping this over EVERY (r, dir) with a neighbor covers both directions
-  // of every edge exactly once each (when r=A,dir=North assigns A's inputs
-  // and B's ready_i; the symmetric r=B,dir=South assigns B's inputs and A's
-  // ready_i) — no signal is ever assigned twice.
-  //
-  // A boundary port (no neighbor) ties its input side to '0 (nothing ever
-  // arrives) and its ready_i to '0 (nothing ever drains it) — see the file
-  // header for why this matches floogen's own convention.
-  // ---------------------------------------------------------------------------
-  for (genvar r = 0; r < NumRouters; r++) begin : gen_router_links
-    for (genvar dp = 0; dp < 4; dp++) begin : gen_dir
-      localparam route_direction_e Dir = route_direction_e'(dp);
-      if (has_neighbor(r, Dir)) begin : gen_connected
-        localparam int unsigned Nbr = neighbor_idx(r, Dir);
-        localparam route_direction_e Opp = opposite_dir(Dir);
-        // dut_ready_in[r] is router r's OWN ready_o output (see the
-        // gen_eject_map / gen_routers port maps below) — it is driven by
-        // r's own floo_router instance and must never be assigned here.
-        // Only dut_ready_out (the router's ready_i INPUT) needs external
-        // drive, fed by the neighbor's ready_o — the mirror-image
-        // iteration (r'=Nbr, dir'=Opp) is what assigns dut_ready_out[r][Dir]
-        // (from dut_ready_in[Nbr][Opp]), by the same symmetry that makes
-        // this loop cover every edge exactly once from each side.
-        assign dut_valid_in[r][Dir][0]   = dut_valid_out[Nbr][Opp][0];
-        assign dut_data_in[r][Dir][0]    = dut_data_out[Nbr][Opp][0];
-        assign dut_ready_out[Nbr][Opp][0] = dut_ready_in[r][Dir][0];
-      end else begin : gen_boundary
-        // No neighbor: nothing ever arrives (valid/data='0) and nothing
-        // ever drains this output (ready_i='0) — matches floogen's own
-        // mesh-router tie-off convention (floo_axi_router.sv.mako).
-        // dut_ready_out (not dut_ready_in, which is r's own output) is the
-        // signal that needs tying here.
-        assign dut_valid_in[r][Dir][0]  = 1'b0;
-        assign dut_data_in[r][Dir][0]   = '0;
-        assign dut_ready_out[r][Dir][0] = 1'b0;
-      end
-    end
-  end
-
-  // ---------------------------------------------------------------------------
-  // Router array
-  // ---------------------------------------------------------------------------
-  for (genvar r = 0; r < NumRouters; r++) begin : gen_routers
-    localparam xy_id_t RouterId = '{
-      x:       x_bits_t'(router_x(r)),
-      y:       y_bits_t'(router_y(r)),
-      port_id: '0
-    };
-
-    floo_router #(
-      .NumRoutes       ( NumPorts     ),
-      .NumVirtChannels ( 1            ),
-      .NumPhysChannels ( 1            ),
-      .flit_t          ( flit_t       ),
-      .hdr_t           ( hdr_t        ),
-      .InFifoDepth     ( InFifoDepth  ),
-      .OutFifoDepth    ( OutFifoDepth ),
-      .RouteAlgo       ( XYRouting    ),
-      .IdWidth         ( $bits(xy_id_t) ),
-      .id_t            ( xy_id_t      )
-    ) i_dut (
-      .clk_i          ( clk               ),
-      .rst_ni         ( rst_n             ),
-      .test_enable_i  ( 1'b0              ),
-      .xy_id_i        ( RouterId          ),
-      .id_route_map_i ( '0                ),  // unused for XYRouting
-      .valid_i        ( dut_valid_in[r]   ),
-      .ready_o        ( dut_ready_in[r]   ),
-      .data_i         ( dut_data_in[r]    ),
-      .credit_o       (                   ),  // VcNaive: constant, unused
-      .valid_o        ( dut_valid_out[r]  ),
-      .ready_i        ( dut_ready_out[r]  ),
-      .data_o         ( dut_data_out[r]   ),
-      .credit_i       ( '0                ),
-      .offload_req_o  (                   ),  // collectives disabled
-      .offload_rsp_i  ( '0                )
-    );
-  end
+  assign rif.ready_in  = mesh_ready_in;
+  assign rif.valid_out = mesh_valid_out;
+  assign rif.data_out  = mesh_data_out;
 
   // ---------------------------------------------------------------------------
   // No UVM entry yet — this checkpoint validates the RTL wiring only: a

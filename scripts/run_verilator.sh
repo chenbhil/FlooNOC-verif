@@ -41,6 +41,16 @@ TB_SOURCES=(
   tb/top/tb_top.sv
 )
 
+# Mesh bench sources. Fully disjoint from TB_SOURCES: the two benches are
+# never compiled into the same Verilator invocation (see docs/known_issues.md
+# and config/dut_config_mesh.svh). Grows in Task 8 (UVM) and Task 11 (SVA).
+TB_MESH_SOURCES=(
+  tb/pkg/floo_tb_mesh_types_pkg.sv
+  tb/interfaces/floonoc_mesh_if.sv
+  tb/top/floonoc_mesh_dut.sv
+  tb/top/tb_top_mesh.sv
+)
+
 require_sources() {
   if [ ! -f "$BUILD/sources.f" ]; then
     echo "[verilator] ERROR: build/sources.f missing — run 'make sources' first" >&2
@@ -85,6 +95,29 @@ do_build() { # $1 = fst|vcd
       -o Vtb_top
   grep '^\$' "logs/build_$fmt.log" > "$BUILD/build_cmd_$fmt.txt"
   echo "[verilator] build ($fmt) PASS -> $obj/Vtb_top (log: logs/build_$fmt.log)"
+}
+
+do_build_mesh() {
+  require_sources
+  local lz4_cflags="" lz4_ldflags="-llz4"
+  if command -v brew >/dev/null 2>&1 && brew --prefix lz4 >/dev/null 2>&1; then
+    local lz4_prefix; lz4_prefix="$(brew --prefix lz4)"
+    lz4_cflags="-I$lz4_prefix/include"
+    lz4_ldflags="-L$lz4_prefix/lib -llz4"
+  fi
+  log_and_run "logs/build_mesh.log" \
+    verilator --binary -j 0 \
+      ${lz4_cflags:+-CFLAGS "$lz4_cflags"} \
+      -LDFLAGS "$lz4_ldflags" \
+      --trace-fst \
+      -f config/verilator.f \
+      -f "$BUILD/sources.f" \
+      "${TB_MESH_SOURCES[@]}" \
+      --top-module tb_top_mesh \
+      -Mdir "$BUILD/obj_dir_mesh" \
+      -o Vtb_top_mesh
+  grep '^\$' "logs/build_mesh.log" > "$BUILD/build_cmd_mesh.txt"
+  echo "[verilator] mesh build PASS -> $BUILD/obj_dir_mesh/Vtb_top_mesh (log: logs/build_mesh.log)"
 }
 
 do_sim() { # $1 = fst|vcd, $2 = testname, $3 = logfile, rest = extra plusargs
@@ -199,8 +232,48 @@ case "${1:-}" in
     echo "[verilator] waves-vcd PASS -> waves/tb_top.vcd (log: $RUN_LOG)"
     ;;
 
+  lint-mesh)
+    require_sources
+    log_and_run logs/lint_mesh.log \
+      verilator --lint-only -sv --timing \
+        config/verilator_waivers.vlt \
+        +incdir+config \
+        -f "$BUILD/sources.f" \
+        tb/pkg/floo_tb_mesh_types_pkg.sv \
+        tb/top/floonoc_mesh_dut.sv \
+        tb/top/lint_wrapper_mesh.sv \
+        --top-module lint_wrapper_mesh
+    echo "[verilator] mesh lint PASS: zero unwaived warnings (log: logs/lint_mesh.log)"
+    ;;
+
+  build-mesh)
+    do_build_mesh
+    ;;
+
+  run-mesh)
+    shift
+    RUN_LOG=logs/run_mesh.log
+    if [ ! -x "$BUILD/obj_dir_mesh/Vtb_top_mesh" ]; then
+      echo "[verilator] ERROR: $BUILD/obj_dir_mesh/Vtb_top_mesh missing — run 'make build-mesh' first" >&2
+      exit 1
+    fi
+    set +e
+    log_and_run "$RUN_LOG" "$BUILD/obj_dir_mesh/Vtb_top_mesh" "$@"
+    rc=$?
+    set -e
+    if [ $rc -ne 0 ]; then
+      echo "[verilator] mesh run FAILED (simulator exit $rc, log: $RUN_LOG)" >&2
+      exit 1
+    fi
+    if ! grep -q '\*\*\* MESH-SMOKE PASSED \*\*\*' "$RUN_LOG"; then
+      echo "[verilator] mesh run FAILED: missing PASS banner (log: $RUN_LOG)" >&2
+      exit 1
+    fi
+    echo "[verilator] mesh run PASS (log: $RUN_LOG)"
+    ;;
+
   *)
-    echo "usage: $0 {lint|build [fst|vcd]|run [+plusargs]|run-neg <test> <re>|waves|waves-vcd}" >&2
+    echo "usage: $0 {lint|build [fst|vcd]|run [+plusargs]|run-neg <test> <re>|waves|waves-vcd|lint-mesh|build-mesh|run-mesh [+plusargs]}" >&2
     exit 2
     ;;
 esac

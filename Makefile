@@ -24,7 +24,7 @@ export REQUIRED_VERILATOR ?= 5.052
 
 FLOONOC_DIR := rtl_or_vendor/floonoc
 
-.PHONY: all setup sources lint build build-vcd run run-negative waves waves-vcd cov clean doctor
+.PHONY: all setup sources lint build build-vcd run run-negative waves waves-vcd cov clean doctor lint-mesh build-mesh run-mesh
 
 all: build
 
@@ -57,6 +57,19 @@ run-negative:
 	./scripts/run_verilator.sh run-neg floonoc_neg_stall_test   'forward progress stopped'
 	@echo "[run-negative] all 3 fault injections were caught — checkers are effective"
 
+# --- Mesh bench (2x2 mesh of floo_router, independent top-level) ---------------
+# Built and run as a SEPARATE Verilator binary from the single-router bench:
+# different top module, different obj dir, different coverage file. The two
+# benches must never share a compile unit — see config/dut_config_mesh.svh.
+lint-mesh: build/sources.f
+	./scripts/run_verilator.sh lint-mesh
+
+build-mesh: build/sources.f
+	./scripts/run_verilator.sh build-mesh
+
+run-mesh:
+	./scripts/run_verilator.sh run-mesh
+
 waves:
 	./scripts/run_verilator.sh waves
 
@@ -84,7 +97,7 @@ cov:
 	@echo "[cov] split summary: logs/coverage_summary.log; annotated source: logs/coverage_report/"
 
 clean:
-	rm -rf build waves/*.fst
+	rm -rf build waves/*.fst waves/*.vcd
 	@echo "[clean] removed build outputs (logs/ kept as evidence)"
 
 doctor:
