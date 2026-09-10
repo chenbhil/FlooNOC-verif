@@ -20,11 +20,12 @@ To re-audit any entry: delete it from `config/verilator_waivers.vlt`, run
 | W6 | all rules | `uvm*/src/*` (UVM 1800.2-2017 library) | Many (the UVM BCL is not Verilator-lint-clean) | Pinned, unmodified third-party verification library; linting it is not a goal of this project. Scoped to the UVM tree only — TB code is NOT covered by this entry. | UVM library version changes, or Accellera publishes a lint-clean release |
 | W7 | `WIDTHTRUNC` | `tb/*` with `-match "*uvm_report_enabled*"` | `uvm_info`/`uvm_error` macros expand to `if (uvm_report_enabled(...))` where the function returns `int` | UVM API signature, expanded into our code by UVM macros; not local logic. Matched on message content so genuine TB width bugs still surface. | UVM macro implementation changes |
 | W8 | `WIDTHTRUNC` | `tb/*` with `-match "*METHODCALL 'randomize'*"` | `randomize()` returns `int` used in boolean context | SystemVerilog-standard `randomize()` signature; call sites check success. Same narrow `-match` scoping as W7. | never expected — standard API |
+| W9 | `UNDRIVEN` | `floonoc/hw/floo_router.sv` (core DUT) with `-match "*past_handshakes_d*"` | `past_handshakes_d` is not driven — only surfaces under `-Wwarn-UNDRIVEN`, enabled for `make lint-mesh` only | Genuinely never assigned anywhere in floo_router.sv at this pin; a pre-existing upstream dead-code leftover (the NBA-target twin of `past_handshakes_q`), not introduced by either bench. Matched on file AND variable name so it cannot mask an UNDRIVEN finding anywhere else in the same file. | FlooNoC pin moves past v0.8.4, or `past_handshakes_d` gains a driver upstream |
 
 Register upkeep rules:
 
 1. A new waiver may not land without a row here (same commit).
-2. Rows W1–W3 (upstream deps) and W4–W5 (DUT) must be re-audited on every
-   pin bump — `make setup` prints the resolved revisions.
+2. Rows W1–W3 (upstream deps) and W4–W5, W9 (DUT) must be re-audited on
+   every pin bump — `make setup` prints the resolved revisions.
 3. If a re-audit shows the warning is gone, delete both the `.vlt` entry and
    the row (keep the ID retired; do not renumber).

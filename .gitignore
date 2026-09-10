@@ -3,6 +3,12 @@ build/
 logs/
 waves/
 
+# Verilator's default coverage dump location when a run is invoked without
+# an explicit +verilator+coverage+file+<path> plusarg (belt-and-braces —
+# both run/do_sim and run-mesh always pass one, into logs/, but a bare
+# invocation of either binary would still drop this at the repo root).
+coverage.dat
+
 # Pinned upstream checkouts (fetched by `make setup` at pinned revisions)
 rtl_or_vendor/floonoc/
 rtl_or_vendor/uvm/

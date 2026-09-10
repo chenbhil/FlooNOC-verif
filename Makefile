@@ -10,6 +10,10 @@
 #   make cov      - annotated coverage report (logs/coverage_report/)
 #   make clean    - remove generated build outputs
 #   make doctor   - print tool/dependency/DUT resolution status
+#
+#   make lint-mesh  - Verilator lint-only pass on the mesh DUT, no UVM/TB
+#   make build-mesh - compile the mesh bench (own top module, own obj dir)
+#   make run-mesh   - sweep all 12 non-loopback (src,dst) pairs of the mesh
 # -----------------------------------------------------------------------------
 
 # --- Pinned revisions ----------------------------------------------------------

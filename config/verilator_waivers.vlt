@@ -38,3 +38,13 @@ lint_off -file "*/uvm*/src/*"
 // on the message content so genuine width bugs in TB code still surface.
 lint_off -rule WIDTHTRUNC -file "*tb/*" -match "*uvm_report_enabled*"
 lint_off -rule WIDTHTRUNC -file "*tb/*" -match "*METHODCALL 'randomize'*"
+
+// [core FlooNoC DUT RTL: floo_router.sv — UNDRIVEN, mesh lint only]
+// `past_handshakes_d` (the NBA-target twin of `past_handshakes_q`) is
+// genuinely never assigned anywhere in floo_router.sv at this FlooNoC pin —
+// a pre-existing upstream dead-code leftover, not something either bench
+// introduced. Only surfaces under `-Wwarn-UNDRIVEN` (make lint-mesh);
+// the single-router `lint` target does not enable this rule, so this entry
+// is inert there. Matched on both file and variable name so it cannot mask
+// an UNDRIVEN finding anywhere else, including elsewhere in this same file.
+lint_off -rule UNDRIVEN -file "*/floonoc/hw/floo_router.sv" -match "*past_handshakes_d*"
