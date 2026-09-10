@@ -818,6 +818,7 @@ endmodule
 export UVM_HOME=/Users/chenbh/verification/uvm/1800.2-2017-1.0
 SCRATCH=/private/tmp/claude-501/-Users-chenbh-verification-FlooNOC-verif/f55002dc-6852-41a9-997e-b5de7d9de8b7/scratchpad
 verilator --binary -j 0 -sv --timing \
+  config/verilator_waivers.vlt \
   +incdir+config \
   -f build/sources.f \
   tb/pkg/floo_tb_mesh_types_pkg.sv \
@@ -834,6 +835,16 @@ Expected: 16 `ok` lines including `ok   R0(0,0)->R3(1,1): 2 hop(s)` and `ok   R0
 - [ ] **Step 3: Nothing to commit**
 
 The scratch file stays out of the repo. Record the result in the Task 13 doc update instead.
+
+> **RESULT (executed 2026-09-10): PASSED.** All 16 (src,dst) pairs agree with
+> the Manhattan oracle, endpoints correct in every case, including
+> `R0(0,0)->R3(1,1): 2 hop(s)` and the degenerate `R0(0,0)->R0(0,0): 0 hop(s)`.
+> Verilator 5.052 handles the `output int unsigned path[$]` formal with no
+> complaint, so outcome (c) does not apply and Task 4's `exp_hops()` may
+> depend on `exp_path` as written. Note the build needs
+> `config/verilator_waivers.vlt` on the command line — without it the build
+> dies on a pre-existing waived `WIDTHEXPAND` in the vendor `axi_pkg.sv`,
+> unrelated to the function under test.
 
 ---
 
