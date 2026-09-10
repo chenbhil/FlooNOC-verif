@@ -30,6 +30,39 @@ package floo_tb_mesh_types_pkg;
   // hardcode "2x2".
   localparam int unsigned MeshDiameter = MeshX + MeshY - 2;
 
+  // Elaboration-time guard: the mesh UVM layer claims to be generic over
+  // mesh shape, and that only holds if the coordinate widths can actually
+  // represent the mesh. Nothing else enforces this — config/dut_config_mesh.svh
+  // sets `FLOO_VERIF_MESH_X_BITS`/`_Y_BITS` BY HAND, independently of
+  // `_MESH_X`/`_MESH_Y`, so editing one without the other silently truncates
+  // every `x_bits_t'(...)`/`y_bits_t'(...)` cast below — measured case:
+  // MeshX=3 with X_BITS=1 sends router 2 and router 5 to the wrong
+  // destination, with no build error.
+  //
+  // `$error` inside a constant function, called from a localparam
+  // initializer, fails Verilator during "function constification" —
+  // elaboration, before any simulation event — under both --lint-only and a
+  // full --binary build; verified empirically both ways (a too-small
+  // X_BITS aborts `make lint-mesh-uvm` and `make build-mesh` with this
+  // function's message, restoring the correct value passes again).
+  // Considered and rejected: a plain `initial`/`$fatal` guard — packages
+  // cannot contain `initial` blocks at all (LRM package_item), and even
+  // hoisted into a module it would only fire at simulation time, after
+  // `lint-mesh`/`lint-mesh-uvm` had already reported PASS.
+  function automatic bit mesh_coord_width_guard();
+    if (!((2 ** `FLOO_VERIF_MESH_X_BITS) >= MeshX)) begin
+      $error("floo_tb_mesh_types_pkg: FLOO_VERIF_MESH_X_BITS=%0d cannot represent MeshX=%0d (2**X_BITS=%0d < MeshX)",
+             `FLOO_VERIF_MESH_X_BITS, MeshX, 2 ** `FLOO_VERIF_MESH_X_BITS);
+    end
+    if (!((2 ** `FLOO_VERIF_MESH_Y_BITS) >= MeshY)) begin
+      $error("floo_tb_mesh_types_pkg: FLOO_VERIF_MESH_Y_BITS=%0d cannot represent MeshY=%0d (2**Y_BITS=%0d < MeshY)",
+             `FLOO_VERIF_MESH_Y_BITS, MeshY, 2 ** `FLOO_VERIF_MESH_Y_BITS);
+    end
+    return 1'b0;
+  endfunction
+
+  localparam bit MeshCoordWidthGuard = mesh_coord_width_guard();
+
   typedef logic [`FLOO_VERIF_MESH_X_BITS-1:0]       x_bits_t;
   typedef logic [`FLOO_VERIF_MESH_Y_BITS-1:0]       y_bits_t;
   typedef logic [`FLOO_VERIF_MESH_PORT_ID_BITS-1:0] port_id_t;

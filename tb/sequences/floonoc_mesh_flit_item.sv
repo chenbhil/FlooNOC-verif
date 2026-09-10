@@ -29,6 +29,13 @@ class floonoc_mesh_flit_item extends uvm_sequence_item;
   // Observation fields (filled by the monitor)
   int unsigned out_router;        // which router's Eject port delivered it
   bit          backpressured;
+  // 1 iff from_flit() was called with is_output=1. out_router alone cannot
+  // tell an input-side item (where it is never set) from a real observation
+  // of router 0 — router 0 is a legal index at any mesh size — so this is
+  // the explicit "was this filled in" flag convert2string() guards on
+  // (FIX 3/FIX 2). Defaults to 0, which is correct: a freshly-built item is
+  // not an output observation until from_flit() says otherwise.
+  bit          is_output_obs;
 
   `uvm_object_utils(floonoc_mesh_flit_item)
 
@@ -46,6 +53,48 @@ class floonoc_mesh_flit_item extends uvm_sequence_item;
     super.new(name);
   endfunction
 
+  // Hand-written field automation, not `uvm_object_utils_begin/`uvm_field_int:
+  // probed separately against this Verilator 5.052 / UVM 1800.2-2017-1.0
+  // combination and the macro form produced 107 WIDTHEXPAND/WIDTHTRUNC
+  // warnings (the generic field-automation storage is 4096 bits wide;
+  // narrow fields like `backpressured` trip a width check on every
+  // compare/copy/print/record call the macro expands to). Rather than force
+  // it, or waive a warning class wholesale project-wide, do_copy/do_compare
+  // are written out by hand — more verbose, but portable.
+  //
+  // do_compare deliberately checks only src_router, dst_router and payload —
+  // a flit's IDENTITY. out_router, backpressured and is_output_obs are
+  // OBSERVATION fields the monitor fills in after the fact; an expected item
+  // built by the sequence never has them set the way an observed item does,
+  // so folding them into compare() would fail every legitimate
+  // expected-vs-observed match for reasons that are not integrity errors.
+  // do_copy still copies everything, including the observation fields —
+  // clone() is a full snapshot, not an identity-only one.
+  virtual function void do_copy(uvm_object rhs);
+    floonoc_mesh_flit_item rhs_;
+    if (!$cast(rhs_, rhs)) begin
+      `uvm_fatal("DO_COPY", "floonoc_mesh_flit_item::do_copy: $cast of rhs failed")
+    end
+    super.do_copy(rhs);
+    src_router    = rhs_.src_router;
+    dst_router    = rhs_.dst_router;
+    payload       = rhs_.payload;
+    out_router    = rhs_.out_router;
+    backpressured = rhs_.backpressured;
+    is_output_obs = rhs_.is_output_obs;
+  endfunction
+
+  virtual function bit do_compare(uvm_object rhs, uvm_comparer comparer);
+    floonoc_mesh_flit_item rhs_;
+    bit result;
+    if (!$cast(rhs_, rhs)) return 0;
+    result = super.do_compare(rhs, comparer);
+    result &= (src_router == rhs_.src_router);
+    result &= (dst_router == rhs_.dst_router);
+    result &= (payload    == rhs_.payload);
+    return result;
+  endfunction
+
   function int unsigned src_x(); return router_x(src_router); endfunction
   function int unsigned src_y(); return router_y(src_router); endfunction
   function int unsigned dst_x(); return router_x(dst_router); endfunction
@@ -53,8 +102,8 @@ class floonoc_mesh_flit_item extends uvm_sequence_item;
 
   function xy_id_t dst_id();
     xy_id_t id;
-    id.x       = x_bits_t'(router_x(dst_router));
-    id.y       = y_bits_t'(router_y(dst_router));
+    id.x       = x_bits_t'(dst_x());
+    id.y       = y_bits_t'(dst_y());
     id.port_id = '0;
     return id;
   endfunction
@@ -69,8 +118,8 @@ class floonoc_mesh_flit_item extends uvm_sequence_item;
   // (collective_op == Unicast, EnCollective off).
   function xy_id_t src_id();
     xy_id_t id;
-    id.x       = x_bits_t'(router_x(src_router));
-    id.y       = y_bits_t'(router_y(src_router));
+    id.x       = x_bits_t'(src_x());
+    id.y       = y_bits_t'(src_y());
     id.port_id = '0;
     return id;
   endfunction
@@ -108,6 +157,7 @@ class floonoc_mesh_flit_item extends uvm_sequence_item;
     dst_router    = router_idx(32'(f.hdr.dst_id.x), 32'(f.hdr.dst_id.y));
     payload       = f.payload;
     backpressured = bp;
+    is_output_obs = is_output;
     if (is_output) begin
       out_router = router;
       src_router = router_idx(32'(f.hdr.src_id.x), 32'(f.hdr.src_id.y));
@@ -117,11 +167,21 @@ class floonoc_mesh_flit_item extends uvm_sequence_item;
   endfunction
 
   virtual function string convert2string();
-    return $sformatf("src=R%0d(%0d,%0d) dst=R%0d(%0d,%0d) hops=%0d payload=0x%016h%s",
-                     src_router, router_x(src_router), router_y(src_router),
-                     dst_router, router_x(dst_router), router_y(dst_router),
-                     exp_hops(), payload,
-                     backpressured ? " [bp]" : "");
+    // out_router is only meaningful on an output-side observation (FIX 3);
+    // on an input-side item, or on an item nobody has run through
+    // from_flit() yet, print "out=-" rather than a router index that would
+    // read as a real (and misleading, since 0 is a legal router) observation.
+    string out_field;
+    if (is_output_obs) out_field = $sformatf(" out=R%0d", out_router);
+    else                out_field = " out=-";
+    // §11.4.11: padding a conditional's false arm only bites when BOTH arms
+    // are bare string literals; casting each arm to `string` sidesteps it
+    // (confirmed by hexdump: unfixed, the false arm was 5x 0x20).
+    return $sformatf("src=R%0d(%0d,%0d) dst=R%0d(%0d,%0d) hops=%0d payload=0x%016h%s%s",
+                     src_router, src_x(), src_y(),
+                     dst_router, dst_x(), dst_y(),
+                     exp_hops(), payload, out_field,
+                     backpressured ? string'(" [bp]") : string'(""));
   endfunction
 
 endclass : floonoc_mesh_flit_item

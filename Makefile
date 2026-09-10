@@ -12,6 +12,7 @@
 #   make doctor   - print tool/dependency/DUT resolution status
 #
 #   make lint-mesh  - Verilator lint-only pass on the mesh DUT, no UVM/TB
+#   make lint-mesh-uvm - compile-check the mesh UVM classes (no UVM top yet)
 #   make build-mesh - compile the mesh bench (own top module, own obj dir)
 #   make run-mesh   - sweep all 12 non-loopback (src,dst) pairs of the mesh
 # -----------------------------------------------------------------------------
@@ -28,7 +29,7 @@ export REQUIRED_VERILATOR ?= 5.052
 
 FLOONOC_DIR := rtl_or_vendor/floonoc
 
-.PHONY: all setup sources lint build build-vcd run run-negative waves waves-vcd cov clean doctor lint-mesh build-mesh run-mesh
+.PHONY: all setup sources lint build build-vcd run run-negative waves waves-vcd cov clean doctor lint-mesh lint-mesh-uvm build-mesh run-mesh
 
 all: build
 
@@ -67,6 +68,14 @@ run-negative:
 # benches must never share a compile unit — see config/dut_config_mesh.svh.
 lint-mesh: build/sources.f
 	./scripts/run_verilator.sh lint-mesh
+
+# Compile-checks the mesh UVM classes (floonoc_mesh_flit_item via
+# floonoc_mesh_uvm_pkg) against uvm_pkg. There is no mesh UVM top yet, so
+# this is the only reproducible evidence they compile — see the case body in
+# scripts/run_verilator.sh. Retired, or folded into build-mesh, once the
+# mesh UVM env lands.
+lint-mesh-uvm: build/sources.f
+	./scripts/run_verilator.sh lint-mesh-uvm
 
 build-mesh: build/sources.f
 	./scripts/run_verilator.sh build-mesh

@@ -10,6 +10,9 @@
 #   run_verilator.sh waves                 - FST run with bounded retry (KI-1)
 #   run_verilator.sh waves-vcd             - VCD run (stable fallback, no retry)
 #   run_verilator.sh lint-mesh             - lint-only pass on the mesh DUT
+#   run_verilator.sh lint-mesh-uvm         - lint-only pass on the mesh UVM
+#                                            classes (no UVM top yet; compile-
+#                                            check only, see the case body)
 #   run_verilator.sh build-mesh            - compile the mesh bench
 #   run_verilator.sh run-mesh [+plusargs]  - explicit plusargs: single run;
 #                                            no plusargs: sweep all non-
@@ -259,6 +262,33 @@ case "${1:-}" in
     echo "            docs/waiver_register.md; log: logs/lint_mesh.log)"
     ;;
 
+  lint-mesh-uvm)
+    require_sources
+    # Compile-checks the mesh UVM classes (floonoc_mesh_flit_item, pulled in
+    # via floonoc_mesh_uvm_pkg) against uvm_pkg. Deliberately NOT folded into
+    # `lint-mesh` above (which has no UVM at all) and deliberately NOT added
+    # to TB_MESH_SOURCES / build-mesh (which has no UVM top module yet, and
+    # adding the package there would break it) — see the TB_MESH_SOURCES
+    # comment. Until the mesh UVM env (driver/monitor/agent/scoreboard/env)
+    # lands with a real UVM top, this target is the only reproducible
+    # evidence that the mesh UVM classes compile at all. Retire this target,
+    # or fold it into build-mesh, once that top exists.
+    log_and_run logs/lint_mesh_uvm.log \
+      verilator --lint-only -sv --timing \
+        -f config/verilator.f \
+        -f "$BUILD/sources.f" \
+        +incdir+"$UVM_HOME/src" \
+        "$UVM_HOME/src/uvm_pkg.sv" \
+        tb/pkg/floo_tb_mesh_types_pkg.sv \
+        tb/interfaces/floonoc_mesh_if.sv \
+        tb/pkg/floonoc_mesh_uvm_pkg.sv \
+        tb/top/floonoc_mesh_dut.sv \
+        tb/top/lint_wrapper_mesh.sv \
+        --top-module lint_wrapper_mesh
+    echo "[verilator] mesh UVM lint PASS: floonoc_mesh_uvm_pkg (incl. floonoc_mesh_flit_item)"
+    echo "            compiles clean against uvm_pkg (log: logs/lint_mesh_uvm.log)"
+    ;;
+
   build-mesh)
     do_build_mesh
     ;;
@@ -366,7 +396,7 @@ case "${1:-}" in
     ;;
 
   *)
-    echo "usage: $0 {lint|build [fst|vcd]|run [+plusargs]|run-neg <test> <re>|waves|waves-vcd|lint-mesh|build-mesh|run-mesh [+plusargs]}" >&2
+    echo "usage: $0 {lint|build [fst|vcd]|run [+plusargs]|run-neg <test> <re>|waves|waves-vcd|lint-mesh|lint-mesh-uvm|build-mesh|run-mesh [+plusargs]}" >&2
     exit 2
     ;;
 esac
