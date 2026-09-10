@@ -69,6 +69,14 @@ class floonoc_mesh_monitor extends uvm_monitor;
           end
           item = floonoc_mesh_flit_item::type_id::create($sformatf("mon_in_r%0d", r));
           item.from_flit(vif.data_in[r], r, /*is_output*/ 1'b0, in_bp[r]);
+          // The scoreboard only ever sees the flag on OUTPUT-side items (its
+          // expectation side is fed by the driver, per A8), and in_ap has no
+          // subscriber today, so an input-side malformed decode would be
+          // reported by nobody unless it is reported here.
+          if (item.hdr_malformed) begin
+            `uvm_error("MON", $sformatf("malformed input flit at router %0d: %s: %s",
+                                        r, item.hdr_malformed_why, item.convert2string()))
+          end
           in_bp[r] = 1'b0;
           `uvm_info("MON", {"in : ", item.convert2string()}, UVM_HIGH)
           in_ap.write(item);

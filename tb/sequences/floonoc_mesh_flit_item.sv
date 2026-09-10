@@ -36,7 +36,7 @@ class floonoc_mesh_flit_item extends uvm_sequence_item;
   // (FIX 3/FIX 2). Defaults to 0, which is correct: a freshly-built item is
   // not an output observation until from_flit() says otherwise.
   bit          is_output_obs;
-  // Set by from_flit() when a decoded wire field lands outside the mesh.
+  // Set by from_flit() when a decoded wire coordinate lands outside the mesh.
   // from_flit() is the single boundary where untrusted wire data becomes a
   // TB router index, so it is the only place that can tell a malformed
   // header from a real one; every consumer downstream has already lost that
@@ -178,18 +178,31 @@ class floonoc_mesh_flit_item extends uvm_sequence_item;
       src_router = router;  // trust the physical port on the input side
     end
     // Range-check the decode at the boundary, before anyone indexes with it.
+    //
+    // The check is on the COORDINATES, not on the composed router index.
+    // router_idx() is y*MeshX + x, so an out-of-range x can be absorbed by
+    // the y*MeshX term and land back inside [0, NumRouters): at MeshX=MeshY=3
+    // with 2-bit coordinates, the wire patterns (x=3,y=0) and (x=3,y=1) are
+    // both outside the mesh yet compose to routers 3 and 6. An index-level
+    // test passes them silently and the flit then aliases onto a legitimate
+    // router — the malformed header is never named, and the failure surfaces
+    // downstream as someone else's ordering mismatch. Checking x and y
+    // separately subsumes the index test and has no such hole.
     hdr_malformed     = 1'b0;
     hdr_malformed_why = "";
-    if (dst_router >= NumRouters) begin
+    if (32'(f.hdr.dst_id.x) >= MeshX || 32'(f.hdr.dst_id.y) >= MeshY) begin
       hdr_malformed     = 1'b1;
       hdr_malformed_why = $sformatf(
-          "hdr.dst_id(x=%0d,y=%0d) decodes to router %0d, outside a %0d-router mesh",
-          32'(f.hdr.dst_id.x), 32'(f.hdr.dst_id.y), dst_router, NumRouters);
-    end else if (is_output && src_router >= NumRouters) begin
+          "hdr.dst_id(x=%0d,y=%0d) is outside a %0dx%0d mesh",
+          32'(f.hdr.dst_id.x), 32'(f.hdr.dst_id.y), MeshX, MeshY);
+    end
+    // Both fields are reported when both are bad — an `else if` here would
+    // name only dst_id on a flit whose src_id is equally malformed.
+    if (is_output && (32'(f.hdr.src_id.x) >= MeshX || 32'(f.hdr.src_id.y) >= MeshY)) begin
+      hdr_malformed_why = {hdr_malformed ? {hdr_malformed_why, "; "} : "",
+                           $sformatf("hdr.src_id(x=%0d,y=%0d) is outside a %0dx%0d mesh",
+                                     32'(f.hdr.src_id.x), 32'(f.hdr.src_id.y), MeshX, MeshY)};
       hdr_malformed     = 1'b1;
-      hdr_malformed_why = $sformatf(
-          "hdr.src_id(x=%0d,y=%0d) decodes to router %0d, outside a %0d-router mesh",
-          32'(f.hdr.src_id.x), 32'(f.hdr.src_id.y), src_router, NumRouters);
     end
   endfunction
 

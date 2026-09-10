@@ -1,7 +1,18 @@
 // -----------------------------------------------------------------------------
 // Mesh scoreboard. Checks (traceability in docs/verification_plan.md):
-//  R1 routing      — every accepted flit is ejected at exactly the router
-//                    predicted by the XY routing rule (i.e. its destination)
+//  R1 routing      — every flit is ejected at the router its own header
+//                    names as the destination. Note what this is and is not:
+//                    it compares two INDEPENDENT sources — the wire-decoded
+//                    hdr.dst_id and the physical Eject port the monitor saw
+//                    it on — so it catches a real DUT misroute. It is not a
+//                    check of the XY routing MODEL: per D6 the eject router
+//                    is the destination by definition, so exp_out_router()
+//                    makes no prediction. The model (exp_out_port_at /
+//                    exp_path) reaches the scoreboard only via exp_hops(),
+//                    which is coverage and printing. The interface exposes
+//                    Eject endpoints only, so the hops in between are the
+//                    DUT's own XYDirectionNotAllowed / NoLoopback assertions'
+//                    job, not this scoreboard's.
 //  R2 payload      — payload and destination header arrive unmodified
 //  R5 no loss/dup  — every accepted flit is delivered exactly once; any
 //                    output flit without a pending expectation is an error
@@ -52,8 +63,9 @@ class floonoc_mesh_scoreboard extends uvm_scoreboard;
 
   // Fault-injection knobs for negative self-tests ONLY (prove the checkers
   // are not vacuous — see docs/verification_plan.md N1/N2). Default -1: off.
-  int corrupt_payload_idx = -1;  // corrupt the Nth accepted flit's expected payload
-  int corrupt_route_idx   = -1;  // model the Nth accepted flit at the wrong router
+  // Indices are 0-based over ACCEPTED flits (compared before n_accepted++).
+  int corrupt_payload_idx = -1;  // corrupt this accepted flit's expected payload
+  int corrupt_route_idx   = -1;  // model this accepted flit at the wrong router
 
   function new(string name, uvm_component parent);
     super.new(name, parent);
@@ -83,9 +95,32 @@ class floonoc_mesh_scoreboard extends uvm_scoreboard;
     return truth;
   endfunction
 
-  // Input handshake accepted by the DUT -> predict the ejecting router
-  virtual function void write_mesh_in(floonoc_mesh_flit_item t);
-    int unsigned eo = t.exp_out_router();
+  // Input handshake accepted by the DUT -> predict the ejecting router.
+  //
+  // `t` is cloned before anything is stored or mutated. The driver already
+  // publishes a clone, so today `t` is ours alone — but uvm_analysis_port
+  // hands the SAME handle to every subscriber in connection order, so the
+  // moment a second subscriber is attached to sent_ap, whether it sees the
+  // true or the N1-corrupted payload would depend on connection order.
+  // One clone here removes that ordering dependency permanently.
+  virtual function void write_mesh_in(floonoc_mesh_flit_item orig);
+    floonoc_mesh_flit_item t;
+    int unsigned eo;
+    if (!$cast(t, orig.clone())) begin
+      `uvm_fatal("SB", "floonoc_mesh_scoreboard::write_mesh_in: $cast of clone() failed")
+    end
+    eo = t.exp_out_router();
+    // Guard the fixed-array indices. An out-of-range index is SILENTLY
+    // DISCARDED in SystemVerilog, so without this an impossible item would
+    // make its expectation vanish and resurface later as a misleading
+    // "unexpected flit" at delivery time, pointing at the DUT.
+    if (t.src_router >= NumRouters || eo >= NumRouters) begin
+      n_mismatched++;
+      `uvm_error("SB", $sformatf(
+        "accepted flit with out-of-range endpoint on a %0d-router mesh: %s",
+        NumRouters, t.convert2string()))
+      return;
+    end
     if (int'(n_accepted) == corrupt_payload_idx) begin
       t.payload = t.payload ^ payload_t'(1);
       `uvm_info("SB_NEG", $sformatf("injected payload corruption on accepted flit #%0d",
@@ -115,6 +150,27 @@ class floonoc_mesh_scoreboard extends uvm_scoreboard;
                                  t.out_router, t.hdr_malformed_why, t.convert2string()))
       return;
     end
+    // R1: routing — the flit must eject at the router its own header names.
+    //
+    // Checked FIRST, ahead of the expectation lookup, because it needs only
+    // the observed flit. A misrouted flit normally lands where nothing is
+    // pending, so the spurious-flit branch below would claim it and report
+    // "unexpected flit" — the right count, the wrong story. Worse, in the
+    // window where the wrong router DOES have something pending, testing R1
+    // after the pop would consume an innocent expectation, turning one fault
+    // into two errors (a routing violation reported against someone else's
+    // flit, then "unexpected flit" when that flit legitimately arrives).
+    // Checking first gives the precise diagnosis and leaves the real
+    // expectation pending, where check_phase reports it as never delivered.
+    if (t.exp_out_router() != t.out_router) begin
+      n_mismatched++;
+      `uvm_error("SB", $sformatf(
+        "routing violation: flit for router %0d(%0d,%0d) ejected at router %0d(%0d,%0d)",
+        t.dst_router, t.dst_x(), t.dst_y(),
+        t.out_router, router_x(t.out_router), router_y(t.out_router)))
+      return;
+    end
+
     // R5: spurious flit — nothing pending for this (src, exit) pair
     if (expected[t.src_router][t.out_router].size() == 0) begin
       n_mismatched++;
@@ -127,18 +183,20 @@ class floonoc_mesh_scoreboard extends uvm_scoreboard;
     // R6: per-pair ordering — the oldest pending flit must be this one
     exp = expected[t.src_router][t.out_router].pop_front();
 
-    // R1: routing — the flit must eject at the router its own header names
-    if (t.exp_out_router() != t.out_router) begin
-      n_mismatched++;
-      `uvm_error("SB", $sformatf(
-        "routing violation: flit for router %0d(%0d,%0d) ejected at router %0d(%0d,%0d)",
-        t.dst_router, t.dst_x(), t.dst_y(),
-        t.out_router, router_x(t.out_router), router_y(t.out_router)))
-      return;
-    end
-
-    // R2: payload + destination header integrity
-    if (t.payload !== exp.payload || t.dst_router != exp.dst_router) begin
+    // R2: payload integrity.
+    //
+    // Only the payload is compared. A `t.dst_router != exp.dst_router` test
+    // used to sit here and was DEAD: expectations are filed under the key
+    // exp.dst_router, this pop used t.out_router as the key, and R1 above
+    // has already established t.dst_router == t.out_router — so the two
+    // destinations are equal by construction on every path except the TB's
+    // own N2 injection. Destination integrity is real, but it is enforced by
+    // the FIFO KEY, not by a comparison: a flit whose destination header was
+    // corrupted in flight is delivered somewhere no expectation is filed and
+    // is caught above as an unexpected flit, with its true expectation left
+    // pending. Keeping a comparison that cannot fail would read as coverage
+    // that does not exist.
+    if (t.payload !== exp.payload) begin
       n_mismatched++;
       `uvm_error("SB", $sformatf("integrity/order mismatch:\n  expected: %s\n  observed: %s",
                                  exp.convert2string(), t.convert2string()))

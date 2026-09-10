@@ -4,8 +4,9 @@
 // Directed phase A: every physical inter-router link, in both directions,
 //   as a 1-hop case (inject at r's Eject, destination is r's neighbor).
 // Directed phase B: both mesh diagonals, both directions each — guarantees
-//   at least one full-diameter (MeshDiameter-hop) case and exercises both
-//   X-then-Y turn senses.
+//   at least one full-diameter (MeshDiameter-hop) case, and on a 2-D mesh
+//   exercises both X-then-Y turn senses (on a 1-D mesh there are no turns,
+//   and the two diagonals coincide).
 // Random phase: constrained-random legal flits (src != dst).
 //
 // Generated from floo_tb_mesh_types_pkg's topology helpers rather than from
@@ -42,8 +43,11 @@ class floonoc_mesh_smoke_seq extends uvm_sequence #(floonoc_mesh_flit_item);
     n_sent++;
   endtask
 
-  // Both directions of one pair, skipped if the pair degenerates (which
-  // happens for the diagonals on a 1xN or Nx1 mesh — src == dst is illegal).
+  // Both directions of one pair, skipped if the pair degenerates. That only
+  // happens on a 1x1 mesh: on a 1xN or Nx1 mesh the two diagonals are
+  // distinct pairs that happen to be THE SAME pair as each other, so the
+  // anti-diagonal re-sends the main one rather than degenerating (harmless,
+  // and it is the only thing that gives R6 a depth-2 FIFO on a 1-D mesh).
   task send_pair(int unsigned a, int unsigned b, string why);
     if (a == b) begin
       `uvm_info("SEQ", $sformatf("skipping degenerate %0s pair R%0d", why, a), UVM_MEDIUM)
@@ -80,10 +84,21 @@ class floonoc_mesh_smoke_seq extends uvm_sequence #(floonoc_mesh_flit_item);
     // --- Random phase: constrained-random legal traffic --------------------
     repeat (num_random) begin
       item = floonoc_mesh_flit_item::type_id::create("rand_item");
-      start_item(item);
+      // Randomized BEFORE start_item, and fatal on failure. A failed solve
+      // leaves the item at its defaults, src_router == dst_router == 0 —
+      // the one combination c_legal_route exists to forbid. Driving it
+      // trips the DUT's own NoLoopback assertion and the flit is never
+      // ejected, so a one-line solver failure would surface as a watchdog
+      // timeout behind a cascade of "never delivered". c_legal_route is two
+      // range bounds and one inequality; the only way it becomes
+      // unsatisfiable is a degenerate (1x1) mesh, which is a config error,
+      // not something to limp past.
       if (item.randomize() == 0) begin
-        `uvm_error("SEQ", "randomize() failed")
+        `uvm_fatal("SEQ", $sformatf(
+          "randomize() failed on a %0d-router mesh — c_legal_route is unsatisfiable (1x1 mesh?)",
+          NumRouters))
       end
+      start_item(item);
       finish_item(item);
       `uvm_info("SEQ", {"random:   ", item.convert2string()}, UVM_MEDIUM)
       n_sent++;
