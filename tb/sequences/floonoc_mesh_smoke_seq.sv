@@ -7,6 +7,9 @@
 //   at least one full-diameter (MeshDiameter-hop) case, and on a 2-D mesh
 //   exercises both X-then-Y turn senses (on a 1-D mesh there are no turns,
 //   and the two diagonals coincide).
+// Directed phase C: three flits on one repeated (src,dst) pair, so the
+//   per-pair ordering check has two entries to order by construction rather
+//   than by whatever the random phase happens to draw.
 // Random phase: constrained-random legal flits (src != dst).
 //
 // Generated from floo_tb_mesh_types_pkg's topology helpers rather than from
@@ -80,6 +83,24 @@ class floonoc_mesh_smoke_seq extends uvm_sequence #(floonoc_mesh_flit_item);
     // --- Directed phase B: both diagonals, both directions -----------------
     send_pair(router_idx(0, 0), router_idx(MeshX-1, MeshY-1), "diag-main");
     send_pair(router_idx(MeshX-1, 0), router_idx(0, MeshY-1), "diag-anti");
+
+    // --- Directed phase C: a same-pair burst, for the ordering check -------
+    // R6 (per-pair delivery order) can only fail if some (src,dst) FIFO ever
+    // holds two entries at once. Phases A and B use exclusively DISTINCT
+    // pairs, and the sequence is serial, so on their own they leave R6 with
+    // nothing to order — a checker that cannot fail. The random phase does
+    // produce repeated pairs, but by probability and seed, not by
+    // construction. This burst makes R6 non-vacuous at every seed and every
+    // mesh shape: three flits, same source, same destination, back to back,
+    // with distinct payloads (ordering is detected via the payload compare,
+    // since flits carry no sequence number).
+    if (router_idx(0, 0) != router_idx(MeshX-1, MeshY-1)) begin
+      for (int unsigned k = 0; k < 3; k++) begin
+        send_directed(router_idx(0, 0), router_idx(MeshX-1, MeshY-1), "order-burst");
+      end
+    end else begin
+      `uvm_info("SEQ", "1x1 mesh: no legal pair, ordering burst skipped", UVM_MEDIUM)
+    end
 
     // --- Random phase: constrained-random legal traffic --------------------
     repeat (num_random) begin
