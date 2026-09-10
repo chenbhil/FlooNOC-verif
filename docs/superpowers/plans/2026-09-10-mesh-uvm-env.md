@@ -344,6 +344,57 @@ wire patterns decode to `dst_router >= NumRouters`. `MeshCoordWidthGuard`
 mesh, but a width that is too *wide* is legal and leaves exactly these
 out-of-range patterns representable on the wire.
 
+
+**A11 — Task 8 executed; three deltas from the task text as written
+(2026-09-10).**
+
+*The env's expectation-side connection.* Task 8 Step 1 predates A8 and still
+said `agent.mon.in_ap.connect(sb.in_imp)`. That is precisely the
+self-certifying wiring A8 exists to prevent, so the env connects
+`agent.drv.sent_ap` instead; `mon.in_ap` is deliberately left unsubscribed
+(the monitor's own input-side `hdr.src_id` cross-check is what makes it
+non-dead). Step 1's snippet is corrected in place. Everything else about the
+env and the smoke test went in as written.
+
+*`tb_top_mesh.sv`'s header, beyond the two paragraphs Step 4(c) names.* Per
+A7 the import-block comment was rewritten rather than deleted — the caution
+against importing both benches' packages still holds, but its mechanism moved
+from macro collision to wildcard-import ambiguity. The module header's
+opening paragraph (`:6-11`) had the same stale macro-collision reasoning and
+was corrected too; A7 flagged it, Step 4(c) did not cover it.
+
+*`lint-mesh-uvm` is kept, not retired.* Its own comment said to retire it or
+fold it into `build-mesh` "once that top exists", and that top now exists. It
+is kept anyway, with the comment rewritten to say why: `build-mesh` is a
+~45 s Verilator + C++ build, `lint-mesh-uvm` is a ~3 s lint-only pass over
+the same package, and that difference is the whole value of the target while
+iterating on the classes. Retiring it would trade a fast check for nothing.
+
+**RESULT (executed 2026-09-10): the first end-to-end mesh UVM run PASSES.**
+
+```
+UVM_INFO [SB] accepted=12 delivered=12 matched=12 mismatched=0 pending=0
+*** TEST PASSED *** (12 flits accepted, 12 delivered, 12 matched, 0 mismatches)
+UVM_ERROR :    0   UVM_FATAL :    0   $finish at 440ns
+[verilator] mesh run PASS
+```
+
+All 12 directed cases appear as predicted — 8 one-hop link cases (`R0.North`,
+`R0.East`, `R1.North`, `R1.West`, `R2.East`, `R2.South`, `R3.South`,
+`R3.West`) and 4 two-hop diagonal cases (R0<->R3, R1<->R2) — so `hdr.src_id`
+survives every hop and D3 holds in practice, not only in the RTL reading.
+The single-router bench re-verified green in the same session (`make lint &&
+make build && make run`: 25/25 matched, `run PASS`).
+
+The 27 `[UVM/COMP/NAME]` warnings in the mesh log are the pre-existing
+DPI-disabled name-check noise, not a mesh regression — the single-router
+bench's log carries 31 of the same, from the same
+`uvm_traversal.svh:274`, and the run before it prints
+`[UVM/COMP/NAMECHECK] ... requires DPI to be enabled`.
+
+The 12 per-pair sweep logs (`logs/run_mesh_src*_dst*.log`) from the retired
+sweep were deleted, so nothing in `logs/` still claims a sweep ran.
+
 ---
 
 ## File structure
@@ -1808,7 +1859,7 @@ class floonoc_mesh_env extends uvm_env;
 
   virtual function void connect_phase(uvm_phase phase);
     super.connect_phase(phase);
-    agent.mon.in_ap.connect(sb.in_imp);
+    agent.drv.sent_ap.connect(sb.in_imp);   // per A8 — NOT mon.in_ap
     agent.mon.out_ap.connect(sb.out_imp);
   endfunction
 
@@ -2232,7 +2283,7 @@ In `tb/env/floonoc_mesh_env.sv`, add the member, build it, and connect it:
 ```
 
 ```systemverilog
-    agent.mon.in_ap.connect(sb.in_imp);
+    agent.drv.sent_ap.connect(sb.in_imp);   // per A8 — NOT mon.in_ap
     agent.mon.out_ap.connect(sb.out_imp);
     agent.mon.out_ap.connect(cov.analysis_export);
 ```
