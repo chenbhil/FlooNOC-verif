@@ -91,20 +91,49 @@ Resolution, in three parts:
   cases: a dropped `gen_eject_map` assign stops a router injecting or
   ejecting, and a dropped `gen_connected` assign kills a link — both now
   fail the sweep. It costs a fraction of a second.
-- **New `check-mesh-x` target** builds the mesh with X-masking disabled
-  (`--x-initial unique --x-assign unique`, no `--trace-fst`) into its own
-  object directory and runs the same 12-pair sweep. This is the only check
-  that can catch a missing `gen_boundary` tie-off, which is otherwise
-  invisible *because* `0` is the correct value. It is **not** part of
-  `build-mesh`/`run-mesh`: keeping the default build X-masked stops
-  X-at-reset noise from derailing UVM bring-up in Tasks 8-12. It is run as a
-  release gate in Task 13.
+- **A `check-mesh-x` target was attempted and ABANDONED as infeasible.** Do
+  not re-attempt it; the reasons are structural, not effort-related. Two
+  independent findings killed it:
 
-Why the tie-off case is worth a whole target even though it is harmless under
-Verilator: this bench is also meant to run on xezim, which has no X-masking.
-A missing tie-off reads X there, breaks the mesh bench, and gets
-misattributed as an xezim bug — the precise failure mode the Verilator-first
-strategy exists to prevent.
+  1. **`--x-initial unique` at compile time is a trap.** It only makes
+     Verilator *capable* of a non-zero reset. `VerilatedContext::randReset()`
+     still defaults to `0` at runtime, so the compile flag alone silently
+     reproduces the exact masking it appears to remove. A green run under
+     that flag proves nothing, while looking like it proves everything.
+     Forcing the behavior requires the runtime plusarg
+     `+verilator+rand+reset+1`.
+  2. **`+verilator+rand+reset+N` is global and cannot be scoped.** It forces
+     *every* undriven signal in the elaborated design, including the vendor
+     DUT's legitimately-undriven internals — `past_handshakes_d` (W9), the
+     arbiter-tree padding in `rr_arb_tree.sv`/`lzc.sv` (`sel_nodes[7]`,
+     `index_nodes[23:21]`, `lower_empty`, `sel`), and the disabled collective
+     path in `floo_output_arbiter.sv`. Forcing those to `1` perturbs the
+     arbiter enough that **every router spuriously asserts `valid_out` on
+     correct, unmodified RTL**. The check failed all 12 pairs on good code.
+     A gate that fails on correct input is worse than no gate.
+
+  A weaker variant (compile flags only, no runtime plusarg) was explicitly
+  rejected: it demonstrably does not catch the fault, so it would be a gate
+  that does not gate — manufacturing exactly the false confidence this whole
+  thread exists to eliminate.
+
+**Residual risk, and why it is acceptable.** A missing `gen_boundary` tie-off
+is undetectable on Verilator under this build config, and would read X on a
+simulator without X-masking (notably xezim), where it would likely be
+misattributed as a simulator bug. That risk is narrow and future-facing:
+
+- It is not present *today*. The spec-compliance review verified
+  `floonoc_mesh_dut.sv` character-by-character against the Phase-1 original
+  (comments stripped, whitespace collapsed) and found only the authorized
+  deltas. Every tie-off is present — established fact, not assumption.
+- No remaining task in this plan reopens `floonoc_mesh_dut.sv`.
+- The 12-pair sweep covers every *consequential* omission, as above.
+
+So the exposure is confined to some future edit of that one file. Task 13
+records this in `docs/known_issues.md`, including the `--x-initial unique`
+trap, so that (a) nobody re-attempts the target and (b) the first person to
+run this bench on xezim knows to check the boundary tie-offs before filing a
+simulator bug.
 
 **A2 — items pulled forward into Task 1 from later tasks.** The stray
 `coverage.dat` fix (`+verilator+coverage+file+logs/coverage_mesh.dat` on
@@ -136,11 +165,14 @@ references into `i_mesh.gen_routers[...]`, which would break the moment a
 generate label changes. If inter-router assertions are ever wanted, the
 answer is a `bind` inside `floonoc_mesh_dut`, not a hierarchical reference.
 
-**A5 — Task 13 additions.** `docs/known_issues.md` needs the two-bench
-compile-separation rule (`scripts/run_verilator.sh` already cross-references
-it), the Verilator `UNDRIVEN` limitation from A1, and the boundary-tie-off
-blind spot with `check-mesh-x` as its mitigation. `make check-mesh-x` joins
-the full-regression gate and the Done criteria.
+**A5 — Task 13 additions.** `docs/known_issues.md` needs three new rows:
+the two-bench compile-separation rule (`scripts/run_verilator.sh` already
+cross-references that file), the Verilator `UNDRIVEN` tracking limitation
+from A1, and the boundary-tie-off blind spot — the latter written so a future
+reader does not re-attempt `check-mesh-x`, and so the first person to run this
+bench on xezim checks the tie-offs before filing a simulator bug. There is no
+`check-mesh-x` gate; the full-regression gate and Done criteria are unchanged
+from the original plan apart from `run-mesh` now sweeping 12 pairs.
 
 ---
 
