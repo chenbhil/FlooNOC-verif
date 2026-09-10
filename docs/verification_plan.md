@@ -48,6 +48,100 @@ coverage split by kind so the numbers cannot be conflated: functional
 47.8% = 43/90. Closure is a non-goal at this milestone; the artifact
 proves end-to-end covergroup operation.
 
+## Mesh bench (tb_top_mesh)
+
+Independent second bench over a `MeshX` x `MeshY` array of `floo_router`
+instances (`tb/top/floonoc_mesh_dut.sv`), driven by `floonoc_mesh_uvm_pkg`.
+Shares no code with the single-router bench and is compiled as a separate
+Verilator binary (`make build-mesh` / `make run-mesh`; see
+[known_issues.md](known_issues.md) KI-6 for why the separation is a rule and
+not a convenience). Endpoints are router indices; only per-router Eject ports
+face the TB, so North/East/South/West are inter-router links inside the mesh
+DUT and are not observable from the interface.
+
+Verified shape: **2x2**. Every bound above `config/dut_config_mesh.svh` is
+derived (`NumRouters`, `MeshDiameter`), and the traffic is generated from the
+topology helpers rather than a literal table, so the code is generic — but
+only 2x2 has been run.
+
+### Requirement-to-test matrix (mesh)
+
+| ID | Requirement | Stimulus | Checker | SVA | Coverage | Status |
+|---|---|---|---|---|---|---|
+| RM1 | Routing: every accepted flit is ejected at exactly the router named by its destination header | `floonoc_mesh_smoke_seq` — every physical link both directions, both mesh diagonals, plus 15 random | `write_mesh_out` R1 block, checked before the expectation lookup so a misroute is diagnosed directly rather than as a spurious flit | — | `cp_dst_router`, `x_src_dst` | **passing** |
+| RM2 | Payload arrives unmodified across every hop | same | `write_mesh_out` R2 block (payload compare against the driver-published expectation) | — | `cp_src_router` | **passing** |
+| RM3 | Handshake/backpressure at every Eject port | same (driver holds valid; ~20% random Eject stall) | accepted/delivered counted only on valid&&ready | `A_IN_VALID_STABLE`, `A_OUT_VALID_STABLE`, covers `C_IN/OUT_HANDSHAKE`, `C_IN/OUT_BACKPRESSURE`, per router | `cp_backpressure` | **passing**, with `A_IN_VALID_STABLE` currently vacuous — see below |
+| RM4 | Reset: every router's Eject output quiescent while reset asserted | reset phase of every run | — | `A_OUT_QUIET_IN_RESET` per router | — | **passing** |
+| RM5 | No loss / no duplication end to end across the mesh | same + drain phase + 200ns idle tail | `check_phase`: pending==0, accepted==delivered; `write_mesh_out`: error on empty expectation queue; malformed-header decode reported at the boundary | — | — | **passing** |
+| RM6 | Ordering per (src router, dst router) pair | directed 3-flit same-pair burst (phase C), plus whatever repeats the random phase draws | per-pair FIFO expectation queues, `pop_front` compare | — | — | **passing**, proven live by mutation |
+| RM7 | Hop-count distribution reaches the mesh diameter | directed diagonals guarantee a `MeshDiameter` case | — | — | `cp_hops` | **passing** |
+| RM8 | Path correctness at intermediate routers | — | **not checked**: `floonoc_mesh_if` exposes only Eject endpoints. Covered instead by the DUT's own per-router `XYDirectionNotAllowed` / `NoLoopback` assertions, which elaborate in all four routers and run under `--assert` | DUT-internal | — | **by DUT assertion** |
+| RM9 | Illegal destination (src == dst) | — | not re-tested at UVM level: `c_legal_route` makes it unconstructible, and the DUT's own `NoLoopback` assertion covers it | — | — | **out of scope** |
+
+**Stimulus, in full.** `floonoc_mesh_smoke_seq` sends 30 flits at 2x2:
+8 one-hop link cases (every physical link, both directions), 4 two-hop
+diagonal cases (both diagonals, both directions), a 3-flit same-pair burst,
+and 15 constrained-random legal flits. Every case is derived from the
+topology helpers (`has_neighbor`, `neighbor_idx`, `router_idx`), not from a
+literal table, so the set rescales with `config/dut_config_mesh.svh`.
+
+**RM6 is non-vacuous by construction, and that took a deliberate fix.**
+Phases A and B use exclusively distinct `(src,dst)` pairs and the sequence is
+serial, so on their own no per-pair FIFO ever holds two entries and the
+ordering check has nothing to order. Phase C exists solely to guarantee a
+depth-2 queue at every seed and mesh shape. Verified by mutation: swapping
+`pop_front` for `pop_back` fails the run, and still fails with the random
+phase disabled (4 mismatches on the 15 directed flits alone).
+
+**`A_IN_VALID_STABLE` is currently vacuous, deliberately kept, and
+instrumented.** Its antecedent is input-side backpressure, which this
+configuration cannot produce: the mesh holds 80 flit slots
+(`NumRouters * NumPorts * (InFifoDepth + OutFifoDepth)`), the driver keeps
+one flit outstanding, and the test sends 30. `C_IN_BACKPRESSURE` — the exact
+antecedent of that assertion — reads 0 and is there to make the vacuity
+visible rather than let it hide behind a 100% figure. Mesh assertion coverage
+is therefore 75% (3/4) by design. See
+[compatibility.md](compatibility.md) for the measurements.
+
+**What RM1 is and is not.** It compares two independent sources — the
+wire-decoded `hdr.dst_id` and the physical Eject port the monitor observed —
+so it catches a real DUT misroute. It is not a check of the XY routing
+*model*: under XY routing the eject router is the destination by definition,
+so the expectation makes no prediction. The model (`exp_out_port_at` /
+`exp_path`) reaches the scoreboard only through `exp_hops()`, which feeds
+coverage and printing. Intermediate-hop checking is RM8, and is deliberately
+out of this interface's reach.
+
+**Why the expectation side is fed by the driver, not the input monitor.** The
+scoreboard subscribes to the driver's `sent_ap` — the original sequence item,
+cloned, published once the input handshake completes — rather than to a
+wire-decoded input observation. Keying expectations off the wire would make a
+driver-side encoding bug self-certifying: a transposed `dst_id()` would be
+decoded back into the same wrong expectation, faithfully routed there by the
+DUT, and scored as a match, with the bench reporting PASS having never sent a
+flit where the sequence asked. The input monitor keeps its own port for
+protocol observation and independently checks that each flit's `hdr.src_id`
+decodes to the port it was physically injected on. (The single-router bench
+has the same weakness by construction; retrofitting it is a follow-up.)
+
+### Negative self-tests (mesh checker effectiveness)
+
+| ID | Fault injected | Knob | Checker that must fire | Expected diagnostic | Status |
+|---|---|---|---|---|---|
+| NM1 | Expected payload of one accepted flit corrupted in the scoreboard model | `corrupt_payload_idx` (config_db, `env.sb`) | RM2 integrity compare | `integrity/order mismatch` | **passing** (caught) |
+| NM2 | One accepted flit modeled as ejecting at the wrong router | `corrupt_route_idx` (config_db, `env.sb`) | RM1/RM5/RM6 | `unexpected flit` / `integrity/order mismatch` / `never delivered` | **passing** (caught) |
+| NM3 | Permanent Eject backpressure on every router (`ready_pct = 0`) | config_db, `env.agent.drv` | forward-progress watchdogs (sequence + drain budgets) | `forward progress stopped` | **passing** (caught) |
+
+Run with `make run-negative-mesh`, which inverts the pass criteria: a
+negative test that reports **no** `UVM_ERROR`, or that misses the expected
+diagnostic, fails the target. Both failure modes were themselves verified by
+pointing the target at a passing test and at a diagnostic that never appears.
+
+NM2's wrong-router helper is fatal rather than silent when no valid
+alternative router exists — on a 2-router mesh "skip to the next router"
+lands back on the true destination, which would make the test vacuously pass:
+the exact failure it exists to disprove.
+
 ## Deferred ideas (do not implement without spec backing)
 
 - Output **data** stability under stall — upstream deliberately keeps the

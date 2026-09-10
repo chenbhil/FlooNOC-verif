@@ -101,7 +101,7 @@ hardcode the mesh size, which is exactly the genericity the file is built to
 keep. So the unreachable bins are left in and documented here instead. The
 covergroup carries the same note at the point of use.
 
-Measured on the 27-flit smoke run (12 directed + 15 random), `make cov-mesh`:
+Measured on the 30-flit smoke run (15 directed + 15 random), `make cov-mesh`:
 
 | Item | Result |
 |---|---|

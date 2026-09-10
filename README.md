@@ -90,9 +90,9 @@ make cov-mesh           # functional / assertion / code coverage split
 Expected `make run-mesh` tail:
 
 ```
-UVM_INFO ... [COV] sampled 27 flits, flit_cg coverage = 85.7%
-UVM_INFO ... [SB] accepted=27 delivered=27 matched=27 mismatched=0 pending=0
-UVM_INFO ... [RESULT] *** TEST PASSED *** (27 flits accepted, 27 delivered, 27 matched, 0 mismatches)
+UVM_INFO ... [COV] sampled 30 flits, flit_cg coverage = 85.7%
+UVM_INFO ... [SB] accepted=30 delivered=30 matched=30 mismatched=0 pending=0
+UVM_INFO ... [RESULT] *** TEST PASSED *** (30 flits accepted, 30 delivered, 30 matched, 0 mismatches)
 [verilator] mesh run PASS (log: logs/run_mesh.log, coverage: logs/coverage_mesh.dat)
 ```
 
@@ -100,7 +100,9 @@ Endpoints are router indices, not port directions: the TB touches only each
 router's Eject port, and North/East/South/West are inter-router links inside
 the mesh DUT. Traffic is generated from the topology helpers rather than a
 literal table — every physical link in both directions, both mesh diagonals
-(guaranteeing a full-diameter route), then constrained-random legal flits.
+(guaranteeing a full-diameter route), a same-pair burst that gives the
+ordering check something to order at every seed, then constrained-random
+legal flits.
 
 Mesh size is set in `config/dut_config_mesh.svh`. The UVM layer derives every
 bound from it (`NumRouters`, `MeshDiameter`), so no mesh dimension is

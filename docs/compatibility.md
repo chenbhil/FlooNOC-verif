@@ -63,6 +63,63 @@ Run: `Vtb_top +UVM_TESTNAME=floonoc_smoke_test +UVM_NO_RELNOTES
 | VCD waves (stable fallback) | **PASS deterministically** — separate `--trace-vcd` build, no retry needed | `make waves-vcd`, `waves/tb_top.vcd` |
 | Reproducibility | **PASS** — `Bender.lock` tracked at repo root; `make setup` fails on any drift vs. the pinned checkout (drift path tested) | `Bender.lock`, `scripts/setup_deps.sh` |
 
+## Results — mesh bench (`tb_top_mesh`, 2x2)
+
+Second, independent bench: separate Verilator binary, separate top module,
+separate object directory and coverage file (see
+[known_issues.md](known_issues.md) KI-6). Numbers below are from the same
+session as the single-router results above, Verilator 5.052.
+
+| Stage | Result | Evidence |
+|---|---|---|
+| Lint (mesh RTL + wrapper, no UVM) | **PASS** — zero unwaived warnings, run with `-Wwarn-UNDRIVEN` on top of the single-router flag set; one waiver (W9), documented | `logs/lint_mesh.log`, `docs/waiver_register.md` |
+| Compile (mesh UVM bench) | **PASS** (~45 s wall) | `logs/build_mesh.log` |
+| Simulation | **PASS** — 30 flits accepted, 30 delivered, 30 matched, 0 mismatches, 0 pending, `UVM_ERROR: 0`, `UVM_FATAL: 0`, `*** TEST PASSED ***` at t=600 ns | `logs/run_mesh.log` |
+| Coverage — functional (covergroup) | **85.7%** (24/28 bins, 30 real samples). All four coverpoints 100%; `x_src_dst` 12/16 = 75%, at its structural ceiling — the 4 unhit bins are exactly the `src == dst` diagonal, which `c_legal_route` makes unreachable | `make cov-mesh` § FUNCTIONAL, `logs/coverage_summary_mesh.log` |
+| Coverage — assertion (SVA cover) | **75.0% (3/4)** — `C_IN_HANDSHAKE`, `C_OUT_HANDSHAKE`, `C_OUT_BACKPRESSURE` hit; **`C_IN_BACKPRESSURE` reads 0**, and that is a measured property of the configuration, not a stimulus accident — see the note below | `make cov-mesh` § ASSERTION |
+| Coverage — code (DUT line) | **47.8%** (43/90 points, DUT closure only) | `make cov-mesh` § CODE, `logs/coverage_report_mesh/` |
+| Negative self-tests (NM1–NM3) | **PASS** — payload corruption, wrong-router expectation and held backpressure each produced the required controlled failure with the expected diagnostic | `make run-negative-mesh`, `logs/run_floonoc_mesh_neg_*.log` |
+| Single-router bench unaffected | **PASS** — `git diff main` over the seven single-router source files is empty, and no non-mesh file under `tb/` differs from `main` | `make lint && make build && make run && make run-negative` |
+
+### Why mesh assertion coverage is 75% and should stay that way
+
+`A_IN_VALID_STABLE` (the TB must hold `valid_in` stable until the DUT takes
+the flit) is **vacuous in this configuration**. Its antecedent is input-side
+backpressure, and the mesh cannot produce any at this traffic level:
+
+- The mesh holds `NumRouters * NumPorts * (InFifoDepth + OutFifoDepth)` =
+  4 x 5 x 4 = **80 flit slots**, the driver keeps at most one flit
+  outstanding, and the test sends 30. No Eject input FIFO can fill.
+- Measured, not assumed: forcing the driver's `ready_pct` to 10 took
+  `C_OUT_BACKPRESSURE` from 3 to 200 while `C_IN_BACKPRESSURE` stayed 0.
+  Forcing it to 0 stalled every flit in the mesh (`accepted=27 delivered=0
+  pending=27`) and *still* all flits were accepted on the input side with
+  `C_IN_BACKPRESSURE` = 0.
+
+`C_IN_BACKPRESSURE` exists precisely to make that visible: it is the exact
+antecedent of `A_IN_VALID_STABLE`, so a zero count is standing evidence that
+the assertion is currently dead weight rather than a passing check. **Do not
+delete the cover to make the percentage read 100%** — the assertion is a real
+TB-side obligation and starts working the moment flits in flight exceed the
+buffering. The single-router bench has the identical blind spot and reads
+100% (3/3) only because it has no equivalent cover; retrofitting one there is
+a candidate follow-up.
+
+### Checker effectiveness beyond the negative tests
+
+Two checks were additionally proven live by mutation rather than by argument:
+
+- **Ordering (RM6).** Replacing the scoreboard's `pop_front` with `pop_back`
+  fails the run (6 mismatches). With the random phase disabled entirely it
+  still fails (4 mismatches on 15 directed flits), so the directed same-pair
+  burst — not the random draw — is what gives the check something to order,
+  at every seed.
+- **The three SVA statements.** Each was mutated individually (Verilator
+  aborts at the first failure) and each fired with its own message:
+  `A_OUT_QUIET_IN_RESET` at t=5 ns, `A_OUT_VALID_STABLE` at t=145 ns,
+  `A_IN_VALID_STABLE` at t=85 ns (antecedent mutated, since its natural
+  antecedent never occurs — see above).
+
 ## UVM features proven in this setup
 
 | Feature | Status | Where |
