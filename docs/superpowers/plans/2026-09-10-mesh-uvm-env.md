@@ -215,6 +215,75 @@ is a documentation item and not a gap. No file currently imports both.
 convention somewhere a future third bench will find it — A5's
 `known_issues.md` rows do not cover it.
 
+**A8 — Task 4's review found a self-certifying scoreboard. Task 5 changes shape
+to fix it. Also corrects a wrong hypothesis of mine and a false claim in this
+plan's Goals.**
+
+*My infinite-loop hypothesis was wrong, and is recorded so nobody re-raises
+it.* I suspected `exp_path`'s `forever` loop could hang on an out-of-mesh
+destination, and that `convert2string()` calling `exp_hops()` on a
+wire-decoded flit could therefore hang the bench on the very corruption it
+exists to report. It cannot. `exp_out_port_at` is **monotone**: East is
+returned only while `dst.x > cur_x`, and the caller then does `cx++`, closing
+the gap by one; West only while `dst.x < cur_x`, so `cx--` cannot underflow.
+The walk converges in exactly `|dx|+|dy|` steps for **any** finite
+destination, inside the mesh or not. Verified by execution over 1024
+start/destination combinations including destinations six routers outside a
+2x2 mesh: zero non-terminating cases.
+
+*The real defect is the mirror image: **the scoreboard's expectation key is
+entirely wire-derived**, so a driver-side encoding bug would be
+self-certifying.* On the input side `from_flit` takes `src_router` from the
+physical port but decodes `dst_router` from `f.hdr.dst_id`. Trace a
+hypothetical bug in `dst_id()` (x/y transposed, say): the driver drives a
+wrong header -> the input monitor decodes that same wrong header as `D'` ->
+the scoreboard pushes `expected[src][D']` -> the DUT faithfully routes to
+`D'` -> the output monitor decodes `D'` and `out_router == D'` -> R1 passes,
+the FIFO hits, `matched` increments. **The bench reports PASS having never
+sent a flit to the destination the sequence asked for.** Nothing in the chain
+compares the wire against the *intended* item.
+
+Today the encoding is externally pinned by the hand-rolled `initial` block in
+`tb/top/tb_top_mesh.sv`, which builds a header independently and checks
+delivery at `router_idx(dst_x, dst_y)`. **Task 8 deletes that block**, at
+which point nothing validates the encoding at all. This is the same
+vacuous-checker family the workspace already lost time to (CLAUDE.md bug 17,
+where scoreboard check R5 was silently not being checked on xezim).
+
+**Decision, effective in Task 5:** the driver gains an analysis port that
+publishes the **original sequence item** (pre-`as_flit()`), immediately after
+the input handshake completes. The scoreboard's `write_mesh_in` subscribes to
+*that*, not to the input-side wire monitor. The input monitor keeps its
+`in_ap` for protocol and backpressure observation and additionally asserts
+that `router_idx(src_id.x, src_id.y) == router` — a free cross-check the
+current `from_flit` throws away, since it ignores the decoded `src_id` on the
+input side.
+
+This deviates from the design spec's "structurally identical agent" wording.
+That wording described a shape, not a requirement; the spec's actual goal is
+checker parity with the single-router bench, and this strictly increases it.
+Note the single-router bench has the identical weakness — its scoreboard is
+also fed from a wire monitor — so this is an improvement over the pattern
+being mirrored, not a correction of a mesh-specific mistake. Worth
+retrofitting there one day; explicitly out of scope here.
+
+*The plan's Goals claim "generic over mesh shape" is FALSE as written.*
+`FLOO_VERIF_MESH_X_BITS` / `_Y_BITS` are hand-set macros, independent of
+`FLOO_VERIF_MESH_X` / `_Y`. If the widths cannot represent the dimensions,
+`x_bits_t'(...)` truncates silently with no build error — measured at
+`MeshX=3, X_BITS=1`, where routers R2->R0 and R5->R3 encode to the wrong
+destination, and at `MeshX=5, X_BITS=2`, where 9 of 25 routers break. The
+decode side fails too: at `MeshX=3, X_BITS=2`, 5 of 16 wire patterns decode
+to `dst_router >= NumRouters`, which as a fixed-array index silently discards
+the write and reads back the default. A width guard is added in Task 4's
+follow-up; until it is in place the genericity claim should not be repeated.
+
+*Deferred to Task 7, recorded so it is not lost:* range-check the decode in
+`from_flit` against `NumRouters` before the value is used as a FIFO index.
+`from_flit` is the single boundary where untrusted wire data becomes a TB
+index, and the only place that can report a malformed header rather than
+propagate it.
+
 ---
 
 ## File structure
