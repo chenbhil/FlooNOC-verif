@@ -85,6 +85,24 @@ module tb_top_mesh;
   assign rif.data_out  = mesh_data_out;
 
   // ---------------------------------------------------------------------------
+  // Protocol assertions (per-router Eject ports)
+  //
+  // One instance covers the whole mesh: floonoc_mesh_router_sva generates the
+  // single-router bench's property set once per router index. Only Eject
+  // ports are reachable from here — the inter-router handshakes are internal
+  // to floonoc_mesh_dut — and only Eject ports carry a TB-side obligation
+  // anyway; see that module's header.
+  // ---------------------------------------------------------------------------
+  floonoc_mesh_router_sva i_sva (
+    .clk       ( clk           ),
+    .rst_n     ( rst_n         ),
+    .valid_in  ( rif.valid_in  ),
+    .ready_in  ( rif.ready_in  ),
+    .valid_out ( rif.valid_out ),
+    .ready_out ( rif.ready_out )
+  );
+
+  // ---------------------------------------------------------------------------
   // UVM entry
   //
   // (The Phase-1 hand-rolled directed smoke check that used to live here was
