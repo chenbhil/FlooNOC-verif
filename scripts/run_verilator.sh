@@ -52,11 +52,12 @@ TB_SOURCES=(
 # never compiled into the same Verilator invocation (see docs/known_issues.md
 # and config/dut_config_mesh.svh). Order matters: the UVM package must follow
 # the types package and the interface it uses, and precede the top that
-# imports it. Grows in Task 11 (SVA).
+# imports it, and the SVA module must precede the top that instantiates it.
 TB_MESH_SOURCES=(
   tb/pkg/floo_tb_mesh_types_pkg.sv
   tb/interfaces/floonoc_mesh_if.sv
   tb/top/floonoc_mesh_dut.sv
+  tb/assertions/floonoc_mesh_router_sva.sv
   tb/pkg/floonoc_mesh_uvm_pkg.sv
   tb/top/tb_top_mesh.sv
 )
