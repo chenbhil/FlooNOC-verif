@@ -395,6 +395,130 @@ bench's log carries 31 of the same, from the same
 The 12 per-pair sweep logs (`logs/run_mesh_src*_dst*.log`) from the retired
 sweep were deleted, so nothing in `logs/` still claims a sweep ran.
 
+
+**A12 — the Task 6/7 review found seven real defects, three of them vacuity
+bugs (2026-09-10).** All were verified by execution (a scratch harness run
+against the real `floo_tb_mesh_types_pkg` at 2x2, 1x4, 4x1 and 3x2), not by
+reading. Fixed in `b8937c0`. Worth recording in full, because three of them
+are the same failure family this workspace keeps meeting: a check that cannot
+fail.
+
+1. **`from_flit`'s range check tested the composed index, not the
+   coordinates.** `router_idx` is `y*MeshX + x`, so an out-of-range `x` can be
+   absorbed by the `y*MeshX` term and land back inside `[0, NumRouters)`. At
+   `MeshX=MeshY=3` with 2-bit coordinates — the exact configuration A10 was
+   written for — the wire patterns `(x=3,y=0)` and `(x=3,y=1)` are outside the
+   mesh yet compose to routers 3 and 6, and were passed silently. A10 counted
+   "5 of 16 out of range"; there are really 7, and the index test caught 5.
+   **A10 was nominally satisfied and not honestly satisfied.** Now checks `x`
+   and `y` separately, which subsumes the index test.
+2. **R1 was tested after the expectation was popped.** A misroute normally
+   lands where nothing is pending and was therefore reported as "unexpected
+   flit" — right count, wrong story. In the window where the wrong router does
+   have something pending, the pop destroyed an innocent expectation, turning
+   one fault into two errors naming neither the fault nor the right flit. R1
+   needs only the observed flit, so it now runs first.
+3. **R2's destination half was dead code.** Expectations are filed under
+   `exp.dst_router` and popped by `t.out_router`, and R1 has already
+   established `t.dst_router == t.out_router`, so
+   `t.dst_router != exp.dst_router` could not fail on any path except the TB's
+   own N2 injection. This is a mesh-specific regression relative to the
+   single-router bench, where the same-shaped clause IS live because
+   `exp_out()` is many-to-one; D6 collapsed `exp_out_router()` to an identity
+   and took the clause's meaning with it. Deleted, with the comment now saying
+   where destination integrity actually comes from (the FIFO key).
+4. **R6 was vacuous as committed at Task 6.** All 12 directed flits use 12
+   distinct `(src,dst)` pairs and the sequence is serial, so no per-pair FIFO
+   ever held two entries — the ordering check had nothing to order. Task 9's
+   `num_random = 15` fixes this in practice (measured: 8 of 12 pairs drawn,
+   6 repeated), but by probability, not by construction. **Still open — see
+   A15.**
+5. **`write_mesh_in` mutated an item it did not own, and indexed unguarded.**
+   `uvm_analysis_port::write` hands the same handle to every subscriber in
+   connection order, so a second subscriber on `sent_ap` would see the
+   N1-corrupted payload or not depending on connect order. It now clones. It
+   also guards its array indices: an out-of-range index is *silently
+   discarded* in SystemVerilog, so an impossible item would make its
+   expectation vanish and resurface later as a phantom "unexpected flit"
+   pointing at the DUT.
+6. **A failed `randomize()` still drove the item**, leaving `src == dst` —
+   the one thing `c_legal_route` forbids — which trips the DUT's NoLoopback
+   assertion and buries a one-line solver failure under a watchdog timeout
+   and a "never delivered" cascade. Now randomizes before `start_item` and is
+   fatal on failure.
+7. **Two comments were factually wrong.** The scoreboard header claimed R1
+   checks the router "predicted by the XY routing rule"; it checks
+   header-vs-ejection-port agreement, which is real (the two sources are
+   independent) but weaker — after D6 the routing MODEL reaches the
+   scoreboard only through `exp_hops()`, which is coverage and printing.
+   And `send_pair`'s comment claimed the diagonals degenerate on a 1xN mesh;
+   measured, they *duplicate* (1x4 and 4x1 both emit 10 flits with 2
+   duplicate pairs) and only a 1x1 mesh degenerates.
+
+The review also confirmed, by tracing the scenario end to end, that **A8 is
+honestly satisfied**: with `sent_ap` feeding the expectation side, a
+transposed `dst_id()` is caught as "unexpected flit" + "never delivered"
+rather than scored as a match. The protection comes from the FIFO key rather
+than from any explicit comparison — which is exactly why defect 3 above was
+misleading to leave in place.
+
+**A13 — Task 10 executed; Verilator 5.052 cannot parse a `with` clause on a
+cross (2026-09-10).** Step 4 anticipated this and its fallback was taken:
+
+```
+%Error: tb/coverage/floonoc_mesh_cov.sv:42:40: syntax error, unexpected
+        with-then-(, expecting '('
+```
+
+so `x_src_dst` carries no `ignore_bins`. Per the step's own instruction the
+`binsof`/`intersect` hand-enumeration was NOT used — it would hardcode the
+mesh size. The unreachable diagonal is documented in the covergroup and goes
+into `docs/uvm_coverage.md` at Task 13.
+
+> **RESULT: `[COV] sampled 27 flits, flit_cg coverage = 85.7%`**, and the
+> `make cov-mesh` report resolves that number completely:
+> `cp_src_router` 4/4, `cp_dst_router` 4/4, `cp_hops` 2/2,
+> `cp_backpressure` 2/2, `x_src_dst` **12/16 = 75%** — and the four misses
+> are exactly `r[0]_x_r[0]`, `r[1]_x_r[1]`, `r[2]_x_r[2]`, `r[3]_x_r[3]`,
+> the `src == dst` diagonal. Every one of the 12 legal pairs is hit. There is
+> no stimulus gap behind the 85.7%; it is 24/28 with 4 bins unreachable by
+> construction.
+
+**A14 — Task 12 executed in a parallel worktree; three deviations, all
+improvements (2026-09-10).**
+
+- **Step 3's `run-neg-mesh` snippet duplicated ~25 lines of the `run-mesh`
+  case.** Extracted into a `do_sim_mesh()` helper (mirroring the existing
+  `do_sim()`) used by both, so the two paths cannot drift on the
+  coverage-file plusarg. The single-router `run` / `run-neg` / `do_sim` paths
+  are untouched.
+- **Step 5's predicted NM3 mechanism was wrong.** It expected the *sequence*
+  watchdog to fire. In practice all 27 flits are absorbed by the input and
+  output FIFOs, the sequence completes, and the **drain** watchdog fires
+  instead. Same `forward progress stopped` string, so the grep holds — but
+  the plan's account of why is not what happens.
+- **NM2 produces a cascade the plan's prose does not anticipate**: the
+  mis-modeled expectation sits in a queue that later legitimate traffic also
+  uses, so `integrity/order mismatch` fires alongside `unexpected flit` and
+  `never delivered`. The permissive regex the plan already prescribed covers
+  it. (The cascade is *smaller* after A12's R1 reordering — `mismatched`
+  went 4 -> 2 and `UVM_ERROR` 6 -> 4 on the merged tree, because the misroute
+  no longer consumes an innocent expectation.)
+
+The harness itself was fault-injected rather than trusted: pointing
+`run-neg-mesh` at the *passing* smoke test correctly fails with
+"checker is vacuous!", and pointing it at a diagnostic that never appears
+correctly fails with "did not report expected diagnostic". Coverage isolation
+verified by hash — `logs/coverage_mesh.dat` is byte-identical before and
+after all five negative invocations.
+
+> **RESULT (re-run on the merged tree, after A12's scoreboard changes):**
+> all three caught. NM1 `accepted=27 delivered=27 matched=26 mismatched=1
+> pending=0`, `UVM_ERROR : 1` — exactly the injected one. NM2
+> `matched=25 mismatched=2 pending=1`, `UVM_ERROR : 4`. NM3
+> `accepted=27 delivered=0 matched=0 pending=27`, `UVM_ERROR : 3`.
+> `[run-negative-mesh] all 3 fault injections were caught`.
+
 ---
 
 ## File structure
