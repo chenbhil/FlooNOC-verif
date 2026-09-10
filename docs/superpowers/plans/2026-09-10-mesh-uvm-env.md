@@ -519,6 +519,100 @@ after all five negative invocations.
 > `accepted=27 delivered=0 matched=0 pending=27`, `UVM_ERROR : 3`.
 > `[run-negative-mesh] all 3 fault injections were caught`.
 
+
+**A15 — R6 was vacuous by construction; fixed with a directed same-pair burst
+(2026-09-10).** A12's finding 4, deferred so it would not shift Task 12's
+fault-injection indices while that task was executing in parallel.
+
+Phases A and B use exclusively distinct `(src,dst)` pairs and the sequence is
+serial, so no per-pair FIFO ever held two entries. Task 9's `num_random = 15`
+made the check live *in practice* — but by seed. Phase C (three flits, one
+pair, back to back) makes it live *by construction* at every seed and mesh
+shape.
+
+Proven by mutation rather than argued: replacing the scoreboard's `pop_front`
+with `pop_back` fails the run with **6 mismatches**, and — the part that
+matters — still fails with **4 mismatches on 15 directed flits** when the
+random phase is disabled entirely. So the burst, not the random draw, is what
+gives the ordering check something to order. Both mutations were reverted.
+
+Flit count is now **30** (8 link + 4 diagonal + 3 burst directed, 15 random),
+which is why the Task 9 and Task 10 numbers recorded above read 27 and the
+final documentation reads 30. Coverage is unchanged at 85.7% — the burst adds
+samples to bins already hit.
+
+**A16 — Task 11 executed in a parallel worktree, and found a vacuous
+assertion the plan's own cover set could not see (2026-09-10).**
+
+The property set went in per D5 (`A_IN_VALID_STABLE`, `A_OUT_VALID_STABLE`,
+`A_OUT_QUIET_IN_RESET` plus handshake and backpressure covers, one interface
+instance, no hierarchical references — A4 held exactly as written). Three
+deviations and one finding:
+
+- **`C_IN_BACKPRESSURE` was added over the plan's cover set, and it reads
+  zero.** It is the exact *antecedent* of `A_IN_VALID_STABLE`, so a zero
+  count is standing evidence that the assertion cannot fire. The cause is
+  structural and was measured, not assumed: the mesh holds
+  `NumRouters * NumPorts * (InFifoDepth + OutFifoDepth)` = 80 flit slots, the
+  driver keeps one flit outstanding, and the test sends 30 — no Eject input
+  FIFO can fill. Forcing `ready_pct` to 10 took `C_OUT_BACKPRESSURE` from 3
+  to 200 while `C_IN_BACKPRESSURE` stayed 0; forcing it to 0 stalled every
+  flit in the mesh and *still* accepted all of them on the input side with
+  `C_IN_BACKPRESSURE` = 0. The assertion is kept (it is a real TB-side
+  obligation that starts working the moment flits in flight exceed the
+  buffering) and the cover is kept to keep the vacuity visible. **Mesh
+  assertion coverage is therefore 75% (3/4), not 100%, and the cover must not
+  be deleted to make the number look better.** The single-router bench has
+  the identical blind spot and reads 100% only because it has no equivalent
+  cover — a retrofit there is a follow-up, out of scope here.
+- **Step 4's command referenced `cov-mesh`, which Task 10 had not yet
+  committed** at the time that worktree branched. Raw `verilator_coverage`
+  was used instead; the Makefile hunk was left to Task 10 to avoid a
+  conflict.
+- **Step 5's "8 lines at 2x2" expectation is unobtainable from the committed
+  flow.** Verilator writes one merged coverage point per generate loop with
+  the index replaced by `*`; per-router counts need
+  `--coverage-per-instance`, which is deliberately NOT on the mesh build
+  because it would also multiply line-coverage points across the four router
+  instances and change the numbers Tasks 10 and 13 report. Per-router
+  evidence came from a throwaway build: `C_IN_HANDSHAKE` 6/7/7/7 = 27 and
+  `C_OUT_HANDSHAKE` 3/7/8/9 = 27, matching the scoreboard's accepted and
+  delivered counts exactly — so the covers are wired to real traffic.
+- **Each of the three assertions was mutated individually** (Verilator aborts
+  at the first failure, so one mutant per property) and each fired with its
+  own message: `A_OUT_QUIET_IN_RESET` at t=5 ns, `A_OUT_VALID_STABLE` at
+  t=145 ns, `A_IN_VALID_STABLE` at t=85 ns with its antecedent mutated —
+  negating the consequent fired nothing, which is how the vacuity above was
+  found.
+
+Also worth knowing, from the same work: **`+uvm_set_config_int=...,ready_pct,0`
+does not reach the driver** — the driver reads `uvm_config_db#(int)::get`
+while the plusarg sets a `uvm_bitstream_t`. A patched rebuild was needed to
+force the jammed-output scenario.
+
+**A17 — Task 13's Step 10 cannot `git add CLAUDE.md`: it is gitignored**
+(`.gitignore:23`), as its own header says. It was updated in place — mesh
+results, the two-bench compile rule, the `exp_path` verification result, and
+the xezim follow-up with bug numbering continuing from 28 — but is not part
+of the commit. The rest of Step 10's file list is correct.
+
+> **TASK 13 RESULT (executed 2026-09-10): complete, and the full Step 9
+> regression is green from `make clean`.**
+>
+> Single-router: lint PASS, build PASS, `*** TEST PASSED *** (25 flits ...)`,
+> all 3 negative self-tests caught.
+> Mesh: lint PASS (zero unwaived warnings, `-Wwarn-UNDRIVEN`), build PASS,
+> `accepted=30 delivered=30 matched=30 mismatched=0 pending=0`,
+> `*** TEST PASSED ***` at t=600 ns, all 3 negative self-tests caught,
+> functional 85.7% (24/28), assertion 75% (3/4), DUT line 47.8%.
+>
+> Done-criteria isolation checks both pass: `git diff --stat main` over the
+> seven single-router source files is **empty**, no non-mesh file under `tb/`
+> differs from `main`, and no unnamespaced `FLOO_VERIF_*` define or use
+> survives in the mesh config or types package (the one match,
+> `FLOO_VERIF_DUT_CONFIG_MESH_SVH_`, is the include guard, which is unique
+> and collides with nothing).
+
 ---
 
 ## File structure
