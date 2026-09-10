@@ -314,6 +314,36 @@ tasks already depend on. A qualified reference in the one file that needs
 it is the smaller change, and it says where the type comes from at the
 point of use.
 
+
+**A10 — Task 7 closes A8's deferred decode range-check, in `from_flit`
+rather than in the scoreboard (executed 2026-09-10).** A8 deferred to Task 7:
+"range-check the decode in `from_flit` against `NumRouters` before the value
+is used as a TB index." Task 7's scoreboard as written did half of it — it
+tested `t.src_router >= NumRouters` on the output side — which is enough to
+protect the FIFO index but is not the check A8 asked for:
+
+- It misses `dst_router`, which `from_flit` also decodes from the wire, at
+  every call site including the input side.
+- It sits three components downstream of the decode. `from_flit` is the one
+  place that still holds the raw `hdr.dst_id.x`/`.y` and can say *what* was
+  malformed; by the time the scoreboard sees the item, only the (wrong)
+  index survives.
+
+Implemented as a `hdr_malformed` / `hdr_malformed_why` pair set by
+`from_flit` for either decoded field, copied by `do_copy` (an observation
+field, so deliberately not in `do_compare`), and printed by
+`convert2string()` wherever the item is logged. The scoreboard's check
+becomes `if (t.hdr_malformed)`, keeping the *reporting* where it was — one
+place, counted in `n_mismatched` alongside every other output-side failure,
+rather than a second error stream out of a `uvm_object`. The task's code
+block is corrected in place.
+
+This is not hypothetical: A8 measured that at `MeshX=3, X_BITS=2`, 5 of 16
+wire patterns decode to `dst_router >= NumRouters`. `MeshCoordWidthGuard`
+(`floo_tb_mesh_types_pkg.sv:64`) rejects widths too *narrow* to represent the
+mesh, but a width that is too *wide* is legal and leaves exactly these
+out-of-range patterns representable on the wire.
+
 ---
 
 ## File structure
@@ -1631,11 +1661,14 @@ class floonoc_mesh_scoreboard extends uvm_scoreboard;
     floonoc_mesh_flit_item exp;
     n_delivered++;
 
-    // R5: unknown source encoding (hdr.src_id outside the mesh)
-    if (t.src_router >= NumRouters) begin
+    // R5: the wire decoded to a router index outside the mesh. Reported
+    // here rather than inside from_flit() so it lands in the same
+    // n_mismatched accounting as every other output-side failure, and so
+    // the item is never used as a FIFO index below.
+    if (t.hdr_malformed) begin
       n_mismatched++;
-      `uvm_error("SB", $sformatf("output flit with unknown src encoding: %s",
-                                 t.convert2string()))
+      `uvm_error("SB", $sformatf("malformed output flit at router %0d: %s: %s",
+                                 t.out_router, t.hdr_malformed_why, t.convert2string()))
       return;
     end
     // R5: spurious flit — nothing pending for this (src, exit) pair
