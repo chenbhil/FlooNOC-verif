@@ -18,7 +18,9 @@ class floonoc_mesh_smoke_seq extends uvm_sequence #(floonoc_mesh_flit_item);
 
   `uvm_object_utils(floonoc_mesh_smoke_seq)
 
-  int unsigned num_random = 0;   // Task 9 raises this
+  // Enough draws that the (src, dst) cross sees repeated pairs, which is
+  // what actually exercises the per-pair ordering check R6.
+  int unsigned num_random = 15;
 
   // Running index, used for the directed payload signature.
   protected int unsigned n_sent = 0;
