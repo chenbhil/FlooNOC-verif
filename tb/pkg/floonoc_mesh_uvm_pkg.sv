@@ -31,5 +31,6 @@ package floonoc_mesh_uvm_pkg;
   `include "floonoc_mesh_cov.sv"
   `include "floonoc_mesh_env.sv"
   `include "floonoc_mesh_smoke_test.sv"
+  `include "floonoc_mesh_negative_tests.sv"
 
 endpackage : floonoc_mesh_uvm_pkg

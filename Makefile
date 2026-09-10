@@ -15,6 +15,7 @@
 #   make lint-mesh-uvm - fast compile-check of the mesh UVM classes, no top
 #   make build-mesh - compile the mesh bench (own top module, own obj dir)
 #   make run-mesh   - run the mesh UVM smoke test (expects PASS)
+#   make run-negative-mesh - mesh fault-injection self-tests (must all fail)
 #   make cov-mesh   - annotated mesh coverage report (logs/coverage_report_mesh/)
 # -----------------------------------------------------------------------------
 
@@ -30,7 +31,7 @@ export REQUIRED_VERILATOR ?= 5.052
 
 FLOONOC_DIR := rtl_or_vendor/floonoc
 
-.PHONY: all setup sources lint build build-vcd run run-negative waves waves-vcd cov clean doctor lint-mesh lint-mesh-uvm build-mesh run-mesh cov-mesh
+.PHONY: all setup sources lint build build-vcd run run-negative waves waves-vcd cov clean doctor lint-mesh lint-mesh-uvm build-mesh run-mesh run-negative-mesh cov-mesh
 
 all: build
 
@@ -100,6 +101,17 @@ cov-mesh:
 	} | tee logs/coverage_summary_mesh.log
 	@verilator_coverage --annotate logs/coverage_report_mesh logs/coverage_mesh.dat > /dev/null
 	@echo "[cov-mesh] split summary: logs/coverage_summary_mesh.log; annotated source: logs/coverage_report_mesh/"
+
+# Mesh negative self-tests: each injects one fault into the checking path and
+# MUST fail with the expected diagnostic (proves the checkers are not vacuous).
+# NM2's regex is permissive because the mis-modeled expectation can land in a
+# queue that other legitimate traffic also uses, in which case the FIFO compare
+# fires first — every listed alternative is a real catch.
+run-negative-mesh:
+	./scripts/run_verilator.sh run-neg-mesh floonoc_mesh_neg_payload_test 'integrity/order mismatch'
+	./scripts/run_verilator.sh run-neg-mesh floonoc_mesh_neg_route_test   'unexpected flit|integrity/order mismatch|never delivered'
+	./scripts/run_verilator.sh run-neg-mesh floonoc_mesh_neg_stall_test   'forward progress stopped'
+	@echo "[run-negative-mesh] all 3 fault injections were caught — mesh checkers are effective"
 
 waves:
 	./scripts/run_verilator.sh waves

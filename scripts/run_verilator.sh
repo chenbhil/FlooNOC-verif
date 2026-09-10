@@ -16,6 +16,9 @@
 #   run_verilator.sh build-mesh            - compile the mesh bench
 #   run_verilator.sh run-mesh [+plusargs]  - execute the mesh UVM smoke test
 #                                            (expects PASS)
+#   run_verilator.sh run-neg-mesh <test> <re>
+#                                          - run a mesh negative test (expects a
+#                                            controlled FAIL matching <re>)
 #
 # Logs go to logs/, exact command lines preserved in the logs and
 # build/build_cmd*.txt. Nonzero exit on any failure, incl. UVM_ERROR > 0
@@ -145,6 +148,30 @@ do_sim() { # $1 = fst|vcd, $2 = testname, $3 = logfile, rest = extra plusargs
   set +e
   log_and_run "$log" \
     "$obj/Vtb_top" "+UVM_TESTNAME=$test" +UVM_NO_RELNOTES \
+      "+verilator+coverage+file+$cov_file" \
+      "$@"
+  local rc=$?
+  set -e
+  return $rc
+}
+
+do_sim_mesh() { # $1 = testname, $2 = logfile, rest = extra plusargs
+  local test="$1" log="$2"; shift 2
+  if [ ! -x "$BUILD/obj_dir_mesh/Vtb_top_mesh" ]; then
+    echo "[verilator] ERROR: $BUILD/obj_dir_mesh/Vtb_top_mesh missing — run 'make build-mesh' first" >&2
+    exit 1
+  fi
+  # Mirrors do_sim's cov_file pattern: without an explicit plusarg the
+  # coverage-instrumented binary (config/verilator.f's --coverage-user
+  # --coverage-line) drops Verilator's default ./coverage.dat at the repo
+  # root instead of into logs/. Negative tests override COV_FILE with a
+  # scratch file so they never clobber the primary logs/coverage_mesh.dat
+  # evidence from the passing smoke run.
+  local cov_file="${COV_FILE:-logs/coverage_mesh.dat}"
+  set +e
+  log_and_run "$log" \
+    "$BUILD/obj_dir_mesh/Vtb_top_mesh" \
+      "+UVM_TESTNAME=$test" +UVM_NO_RELNOTES \
       "+verilator+coverage+file+$cov_file" \
       "$@"
   local rc=$?
@@ -299,31 +326,14 @@ case "${1:-}" in
   run-mesh)
     shift
     RUN_LOG=logs/run_mesh.log
-    if [ ! -x "$BUILD/obj_dir_mesh/Vtb_top_mesh" ]; then
-      echo "[verilator] ERROR: $BUILD/obj_dir_mesh/Vtb_top_mesh missing — run 'make build-mesh' first" >&2
-      exit 1
-    fi
-    # Mirrors do_sim's cov_file pattern: without an explicit plusarg the
-    # coverage-instrumented binary (config/verilator.f's --coverage-user
-    # --coverage-line) drops Verilator's default ./coverage.dat at the repo
-    # root instead of into logs/.
-    #
     # The 12-pair (src,dst) sweep that used to live here is retired: it
     # existed because the Phase-1 scaffolding could only drive one hand-built
     # flit per run, so covering every link meant re-running the binary. The
     # directed phase of floonoc_mesh_smoke_seq now sends every link in both
     # directions plus both diagonals within a single run, with a scoreboard
     # behind it rather than a $display banner.
-    set +e
-    log_and_run "$RUN_LOG" \
-      "$BUILD/obj_dir_mesh/Vtb_top_mesh" \
-        "+UVM_TESTNAME=${MESH_TEST:-floonoc_mesh_smoke_test}" +UVM_NO_RELNOTES \
-        "+verilator+coverage+file+${COV_FILE:-logs/coverage_mesh.dat}" \
-        "$@"
-    rc=$?
-    set -e
-    if [ $rc -ne 0 ]; then
-      echo "[verilator] mesh run FAILED (simulator exit $rc, log: $RUN_LOG)" >&2
+    if do_sim_mesh "${MESH_TEST:-floonoc_mesh_smoke_test}" "$RUN_LOG" "$@"; then :; else
+      echo "[verilator] mesh run FAILED (simulator exit $?, log: $RUN_LOG)" >&2
       exit 1
     fi
     # UVM does not propagate error counts into the exit code; enforce here.
@@ -336,8 +346,35 @@ case "${1:-}" in
     echo "[verilator] mesh run PASS (log: $RUN_LOG, coverage: ${COV_FILE:-logs/coverage_mesh.dat})"
     ;;
 
+  run-neg-mesh)
+    TESTNAME="${2:?usage: run-neg-mesh <testname> <expected-regex>}"
+    EXPECT_RE="${3:?usage: run-neg-mesh <testname> <expected-regex>}"
+    NEG_LOG="logs/run_$TESTNAME.log"
+    # Scratch coverage file: a negative run must never overwrite the
+    # logs/coverage_mesh.dat evidence produced by the passing smoke run.
+    export COV_FILE="logs/coverage_mesh_neg.dat"
+    do_sim_mesh "$TESTNAME" "$NEG_LOG" || {
+      echo "[verilator] run-neg-mesh FAILED: simulator crashed instead of reporting (log: $NEG_LOG)" >&2
+      exit 1
+    }
+    # Inverted criteria: the injected fault MUST be caught and reported.
+    if grep -q '^UVM_ERROR :    0$' "$NEG_LOG"; then
+      echo "[verilator] run-neg-mesh FAILED: $TESTNAME reported no UVM_ERROR — checker is vacuous!" >&2
+      exit 1
+    fi
+    if ! grep -q 'TEST FAILED' "$NEG_LOG"; then
+      echo "[verilator] run-neg-mesh FAILED: $TESTNAME missing TEST FAILED banner" >&2
+      exit 1
+    fi
+    if ! grep -Eq "$EXPECT_RE" "$NEG_LOG"; then
+      echo "[verilator] run-neg-mesh FAILED: $TESTNAME did not report expected diagnostic /$EXPECT_RE/" >&2
+      exit 1
+    fi
+    echo "[verilator] run-neg-mesh PASS: $TESTNAME failed as intended with /$EXPECT_RE/ (log: $NEG_LOG)"
+    ;;
+
   *)
-    echo "usage: $0 {lint|build [fst|vcd]|run [+plusargs]|run-neg <test> <re>|waves|waves-vcd|lint-mesh|lint-mesh-uvm|build-mesh|run-mesh [+plusargs]}" >&2
+    echo "usage: $0 {lint|build [fst|vcd]|run [+plusargs]|run-neg <test> <re>|waves|waves-vcd|lint-mesh|lint-mesh-uvm|build-mesh|run-mesh [+plusargs]|run-neg-mesh <test> <re>}" >&2
     exit 2
     ;;
 esac
