@@ -19,15 +19,21 @@ package floo_tb_mesh_types_pkg;
   localparam int unsigned MeshX        = `FLOO_VERIF_MESH_X;
   localparam int unsigned MeshY        = `FLOO_VERIF_MESH_Y;
   localparam int unsigned NumRouters   = MeshX * MeshY;
-  localparam int unsigned NumPorts     = `FLOO_VERIF_NUM_PORTS;
-  localparam int unsigned FlitDataW    = `FLOO_VERIF_FLIT_DATA_W;
-  localparam int unsigned InFifoDepth  = `FLOO_VERIF_IN_FIFO_DEPTH;
-  localparam int unsigned OutFifoDepth = `FLOO_VERIF_OUT_FIFO_DEPTH;
+  localparam int unsigned NumPorts     = `FLOO_VERIF_MESH_NUM_PORTS;
+  localparam int unsigned FlitDataW    = `FLOO_VERIF_MESH_FLIT_DATA_W;
+  localparam int unsigned InFifoDepth  = `FLOO_VERIF_MESH_IN_FIFO_DEPTH;
+  localparam int unsigned OutFifoDepth = `FLOO_VERIF_MESH_OUT_FIFO_DEPTH;
 
-  typedef logic [`FLOO_VERIF_X_BITS-1:0]       x_bits_t;
-  typedef logic [`FLOO_VERIF_Y_BITS-1:0]       y_bits_t;
-  typedef logic [`FLOO_VERIF_PORT_ID_BITS-1:0] port_id_t;
-  typedef logic [FlitDataW-1:0]                payload_t;
+  // Longest possible route in a mesh under dimension-order XY routing:
+  // (MeshX-1) X hops plus (MeshY-1) Y hops. Used by later tasks for the
+  // drain budget and the hop-count coverage bins, so neither has to
+  // hardcode "2x2".
+  localparam int unsigned MeshDiameter = MeshX + MeshY - 2;
+
+  typedef logic [`FLOO_VERIF_MESH_X_BITS-1:0]       x_bits_t;
+  typedef logic [`FLOO_VERIF_MESH_Y_BITS-1:0]       y_bits_t;
+  typedef logic [`FLOO_VERIF_MESH_PORT_ID_BITS-1:0] port_id_t;
+  typedef logic [FlitDataW-1:0]                     payload_t;
 
   // Concrete DUT types from FlooNoC's own macros (hw/include/floo_noc/typedef.svh)
   `FLOO_TYPEDEF_XY_NODE_ID_T(xy_id_t, x_bits_t, y_bits_t, port_id_t)
