@@ -54,6 +54,96 @@ The spec at `docs/superpowers/specs/2026-09-10-mesh-uvm-env-design.md` is the re
 
 ---
 
+## Amendments made during execution
+
+Recorded as they happen so a future reader sees the plan that was actually
+executed, not the one originally written.
+
+**A1 — Task 1's `lint-mesh` as originally specified could not detect a missing
+driver (found by code review, 2026-09-10).** The review proved by fault
+injection that deleting a single `assign` from `floonoc_mesh_dut.sv` passed
+both `make lint-mesh` and `make run-mesh`. Two independent causes:
+Verilator's `UNDRIVEN` is not in the default warning set, and the build's
+`--x-initial 0` (from `config/verilator.f:34-35`) makes the undriven bit read
+`0` — coincidentally the correct tie-off value.
+
+This was a defect in the plan, not in the implementation. The original
+`lint-mesh` mirrored the single-router `lint` invocation, inheriting the
+assumption that `--x-initial 0` is safe because "the design is reset-clean."
+That assumption was established for a bench whose wiring was already trusted.
+For a freshly hand-wired mesh, where the entire risk *is* "did I drive
+everything", the same flag inverts from harmless to actively concealing.
+
+Resolution, in three parts:
+
+- **`-Wwarn-UNDRIVEN` added to `lint-mesh` only** (not to the single-router
+  `lint`), with one tightly scoped waiver (W9: `floo_router.sv`
+  `past_handshakes_d`, a genuine pre-existing upstream dead net), registered
+  in `docs/waiver_register.md` per that file's own upkeep rules. This is a net
+  positive but **does not close the gap**: Verilator stops per-bit drivenness
+  tracking once a multi-dimensional packed array slice is read through a
+  genvar-indexed submodule port connection inside a generate loop — exactly
+  the `.valid_i(dut_valid_in[r])` pattern in `gen_routers`. Confirmed with
+  four minimal repros; `split_var` via a `.vlt` directive had no effect.
+  Treat this as a known Verilator limitation, not a to-do.
+- **`run-mesh` now sweeps all 12 non-loopback `(src, dst)` pairs** instead of
+  the single default `R0 → (1,1)` case. This closes the *consequential*
+  cases: a dropped `gen_eject_map` assign stops a router injecting or
+  ejecting, and a dropped `gen_connected` assign kills a link — both now
+  fail the sweep. It costs a fraction of a second.
+- **New `check-mesh-x` target** builds the mesh with X-masking disabled
+  (`--x-initial unique --x-assign unique`, no `--trace-fst`) into its own
+  object directory and runs the same 12-pair sweep. This is the only check
+  that can catch a missing `gen_boundary` tie-off, which is otherwise
+  invisible *because* `0` is the correct value. It is **not** part of
+  `build-mesh`/`run-mesh`: keeping the default build X-masked stops
+  X-at-reset noise from derailing UVM bring-up in Tasks 8-12. It is run as a
+  release gate in Task 13.
+
+Why the tie-off case is worth a whole target even though it is harmless under
+Verilator: this bench is also meant to run on xezim, which has no X-masking.
+A missing tie-off reads X there, breaks the mesh bench, and gets
+misattributed as an xezim bug — the precise failure mode the Verilator-first
+strategy exists to prevent.
+
+**A2 — items pulled forward into Task 1 from later tasks.** The stray
+`coverage.dat` fix (`+verilator+coverage+file+logs/coverage_mesh.dat` on
+`run-mesh`) was moved up from Task 8, because an untracked coverage dump in
+the repo root is a hazard the moment it exists, not when Task 8 arrives.
+`coverage.dat` was also added to `.gitignore` — belt-and-braces, since a bare
+invocation of the binary still drops one. **Task 8 must therefore NOT re-add
+the coverage plusarg**; it only has to change `run-mesh`'s PASS criteria (see
+A3).
+
+**A3 — Task 8 handover, now marked in the source.** `run-mesh`'s PASS check
+greps for `*** MESH-SMOKE PASSED ***`, printed by the Phase-1 scaffolding
+that Task 8 deletes; it must become `TEST PASSED` + `UVM_ERROR : 0` +
+`UVM_FATAL : 0`, as in the `run` case. Separately, that scaffolding
+procedurally drives `rif.ready_out` / `rif.valid_in` / `rif.data_in`, and the
+Task 8 UVM driver drives the same interface variables — leaving both in place
+is a last-write-wins race with no diagnostic. Both couplings now carry
+comments in `tb/top/tb_top_mesh.sv` and `scripts/run_verilator.sh`. Task 8
+also retires the 12-pair sweep, whose coverage the directed phase of
+`floonoc_mesh_smoke_seq` subsumes with a scoreboard behind it.
+
+**A4 — Task 11 SVA binding (no change, decision recorded).** After Task 1's
+extraction, the inter-router handshakes are internal to `floonoc_mesh_dut`
+and no longer visible from `tb_top_mesh`. This does not affect the plan: per
+D5 the mesh SVA deliberately asserts only on per-router Eject ports, which
+remain on `floonoc_mesh_if`, so the single interface-level instance in Task
+11 still works unchanged. Recorded here so nobody reaches for hierarchical
+references into `i_mesh.gen_routers[...]`, which would break the moment a
+generate label changes. If inter-router assertions are ever wanted, the
+answer is a `bind` inside `floonoc_mesh_dut`, not a hierarchical reference.
+
+**A5 — Task 13 additions.** `docs/known_issues.md` needs the two-bench
+compile-separation rule (`scripts/run_verilator.sh` already cross-references
+it), the Verilator `UNDRIVEN` limitation from A1, and the boundary-tie-off
+blind spot with `check-mesh-x` as its mitigation. `make check-mesh-x` joins
+the full-regression gate and the Done criteria.
+
+---
+
 ## File structure
 
 **Created:**
@@ -1655,6 +1745,16 @@ Three edits to `tb/top/tb_top_mesh.sv`:
 ```
 
 - [ ] **Step 5: Add UVM to the mesh build and switch the run criteria**
+
+> **Amended — see A2/A3 above.** Task 1 already added the
+> `+verilator+coverage+file+` plusarg and turned `run-mesh` into a 12-pair
+> sweep, so the `run-mesh` case on disk no longer matches the block below.
+> Do **not** re-add the coverage plusarg. What this step actually has to do
+> is: swap the `*** MESH-SMOKE PASSED ***` grep for `TEST PASSED` +
+> `UVM_ERROR : 0` + `UVM_FATAL : 0`, add `+UVM_TESTNAME` / `+UVM_NO_RELNOTES`,
+> and retire the 12-pair sweep (the directed phase of the smoke sequence
+> subsumes it, with a scoreboard behind it). Build the real edit from the
+> current file, not from this block.
 
 In `scripts/run_verilator.sh`, extend `TB_MESH_SOURCES` to include the UVM package (order matters — the package must come after the types and interface, before the top):
 
