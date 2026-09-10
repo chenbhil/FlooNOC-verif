@@ -2171,10 +2171,23 @@ Expected:
 
 ```bash
 grep -c 'randomize() failed' logs/run_mesh.log || true
-grep -o 'random:   src=R[0-9]* dst=R[0-9]*' logs/run_mesh.log | sort | uniq -c | sort -rn
+grep -o 'random:   src=R[0-9]*([0-9],[0-9]) dst=R[0-9]*' logs/run_mesh.log \
+  | sed 's/([0-9],[0-9])//' | sort | uniq -c | sort -rn
 ```
 
 Expected: the first command prints `0`. The second lists distinct `src=Rn dst=Rm` pairs, **none with `src` equal to `dst`**, and covering more than a couple of distinct pairs. If every draw is the same pair, the solver is degenerate and `c_legal_route` needs revisiting.
+
+(The pattern carries the `(x,y)` coordinates because `convert2string()` prints
+them between the two fields — the original `src=R[0-9]* dst=R[0-9]*` matched
+nothing on a correct run, which per A6 is the failure mode to avoid: a check
+that reports nothing on correct work.)
+
+> **RESULT (executed 2026-09-10): PASSED.** `accepted=27 delivered=27
+> matched=27 mismatched=0 pending=0`, `*** TEST PASSED ***`, `UVM_ERROR : 0`,
+> `$finish at 580ns`. Zero `randomize() failed`. The 15 random draws covered
+> **8 of the 12 legal (src,dst) pairs**, none with `src == dst`, with six
+> pairs drawn more than once (R3->R2 three times) — so the repeated-pair
+> traffic that check R6 needs is genuinely present, not assumed.
 
 - [ ] **Step 4: Commit**
 
