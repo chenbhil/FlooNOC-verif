@@ -12,9 +12,9 @@
 #   make doctor   - print tool/dependency/DUT resolution status
 #
 #   make lint-mesh  - Verilator lint-only pass on the mesh DUT, no UVM/TB
-#   make lint-mesh-uvm - compile-check the mesh UVM classes (no UVM top yet)
+#   make lint-mesh-uvm - fast compile-check of the mesh UVM classes, no top
 #   make build-mesh - compile the mesh bench (own top module, own obj dir)
-#   make run-mesh   - sweep all 12 non-loopback (src,dst) pairs of the mesh
+#   make run-mesh   - run the mesh UVM smoke test (expects PASS)
 # -----------------------------------------------------------------------------
 
 # --- Pinned revisions ----------------------------------------------------------
@@ -69,11 +69,11 @@ run-negative:
 lint-mesh: build/sources.f
 	./scripts/run_verilator.sh lint-mesh
 
-# Compile-checks the mesh UVM classes (floonoc_mesh_flit_item via
-# floonoc_mesh_uvm_pkg) against uvm_pkg. There is no mesh UVM top yet, so
-# this is the only reproducible evidence they compile — see the case body in
-# scripts/run_verilator.sh. Retired, or folded into build-mesh, once the
-# mesh UVM env lands.
+# Fast compile-check of the mesh UVM classes (floonoc_mesh_uvm_pkg) against
+# uvm_pkg, with no top-level elaboration and no C++ build. build-mesh now
+# compiles the same package for real; this stays as the seconds-not-minutes
+# check while iterating on the classes. Details in the case body in
+# scripts/run_verilator.sh.
 lint-mesh-uvm: build/sources.f
 	./scripts/run_verilator.sh lint-mesh-uvm
 

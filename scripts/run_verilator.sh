@@ -14,9 +14,8 @@
 #                                            classes (no UVM top yet; compile-
 #                                            check only, see the case body)
 #   run_verilator.sh build-mesh            - compile the mesh bench
-#   run_verilator.sh run-mesh [+plusargs]  - explicit plusargs: single run;
-#                                            no plusargs: sweep all non-
-#                                            loopback (src,dst) pairs
+#   run_verilator.sh run-mesh [+plusargs]  - execute the mesh UVM smoke test
+#                                            (expects PASS)
 #
 # Logs go to logs/, exact command lines preserved in the logs and
 # build/build_cmd*.txt. Nonzero exit on any failure, incl. UVM_ERROR > 0
@@ -51,11 +50,14 @@ TB_SOURCES=(
 
 # Mesh bench sources. Fully disjoint from TB_SOURCES: the two benches are
 # never compiled into the same Verilator invocation (see docs/known_issues.md
-# and config/dut_config_mesh.svh). Grows in Task 8 (UVM) and Task 11 (SVA).
+# and config/dut_config_mesh.svh). Order matters: the UVM package must follow
+# the types package and the interface it uses, and precede the top that
+# imports it. Grows in Task 11 (SVA).
 TB_MESH_SOURCES=(
   tb/pkg/floo_tb_mesh_types_pkg.sv
   tb/interfaces/floonoc_mesh_if.sv
   tb/top/floonoc_mesh_dut.sv
+  tb/pkg/floonoc_mesh_uvm_pkg.sv
   tb/top/tb_top_mesh.sv
 )
 
@@ -120,6 +122,8 @@ do_build_mesh() {
       --trace-fst \
       -f config/verilator.f \
       -f "$BUILD/sources.f" \
+      +incdir+"$UVM_HOME/src" \
+      "$UVM_HOME/src/uvm_pkg.sv" \
       "${TB_MESH_SOURCES[@]}" \
       --top-module tb_top_mesh \
       -Mdir "$BUILD/obj_dir_mesh" \
@@ -264,15 +268,14 @@ case "${1:-}" in
 
   lint-mesh-uvm)
     require_sources
-    # Compile-checks the mesh UVM classes (floonoc_mesh_flit_item, pulled in
-    # via floonoc_mesh_uvm_pkg) against uvm_pkg. Deliberately NOT folded into
-    # `lint-mesh` above (which has no UVM at all) and deliberately NOT added
-    # to TB_MESH_SOURCES / build-mesh (which has no UVM top module yet, and
-    # adding the package there would break it) — see the TB_MESH_SOURCES
-    # comment. Until the mesh UVM env (driver/monitor/agent/scoreboard/env)
-    # lands with a real UVM top, this target is the only reproducible
-    # evidence that the mesh UVM classes compile at all. Retire this target,
-    # or fold it into build-mesh, once that top exists.
+    # Compile-checks the mesh UVM package against uvm_pkg with no top-level
+    # elaboration and no C++ build. Since Task 8, build-mesh compiles the same
+    # package for real, so this is no longer the only evidence that it
+    # compiles — it is kept as the FAST check (a few seconds against
+    # build-mesh's minutes) while iterating on the classes, and because it is
+    # the one invocation that exercises them without a UVM top, which is what
+    # `make lint-mesh-uvm` is for. Deliberately still NOT folded into
+    # `lint-mesh` above, which has no UVM at all.
     log_and_run logs/lint_mesh_uvm.log \
       verilator --lint-only -sv --timing \
         -f config/verilator.f \
@@ -295,6 +298,7 @@ case "${1:-}" in
 
   run-mesh)
     shift
+    RUN_LOG=logs/run_mesh.log
     if [ ! -x "$BUILD/obj_dir_mesh/Vtb_top_mesh" ]; then
       echo "[verilator] ERROR: $BUILD/obj_dir_mesh/Vtb_top_mesh missing — run 'make build-mesh' first" >&2
       exit 1
@@ -303,96 +307,33 @@ case "${1:-}" in
     # coverage-instrumented binary (config/verilator.f's --coverage-user
     # --coverage-line) drops Verilator's default ./coverage.dat at the repo
     # root instead of into logs/.
-    MESH_COV_FILE="${COV_FILE:-logs/coverage_mesh.dat}"
-
-    # MESH-SMOKE PASSED is printed by the Phase-1 hand-rolled `initial` block
-    # in tb_top_mesh.sv, not by a UVM test — that scaffolding is deleted once
-    # the mesh UVM env lands (Task 8), at which point this check becomes
-    # `TEST PASSED` + `UVM_ERROR : 0`, mirroring the `run` case above.
-    run_one_mesh() { # $1 = per-run log, rest = plusargs
-      local log="$1"; shift
-      local rc
-      set +e
-      log_and_run "$log" "$BUILD/obj_dir_mesh/Vtb_top_mesh" \
-        "+verilator+coverage+file+$MESH_COV_FILE" "$@"
-      rc=$?
-      set -e
-      if [ $rc -ne 0 ]; then
-        echo "[verilator] mesh run FAILED (simulator exit $rc, log: $log)" >&2
-        return 1
-      fi
-      if ! grep -q '\*\*\* MESH-SMOKE PASSED \*\*\*' "$log"; then
-        echo "[verilator] mesh run FAILED: missing PASS banner (log: $log)" >&2
-        return 1
-      fi
-      return 0
-    }
-
-    if [ "$#" -gt 0 ]; then
-      # Explicit plusargs given: run exactly that one case, unswept. A
-      # separate log file so an ad-hoc debug run never clobbers
-      # logs/run_mesh.log, which the sweep below uses as its combined
-      # evidence log.
-      RUN_LOG=logs/run_mesh_single.log
-      run_one_mesh "$RUN_LOG" "$@" || exit 1
-      echo "[verilator] mesh run PASS (log: $RUN_LOG, coverage: $MESH_COV_FILE)"
-    else
-      # No plusargs: sweep all non-loopback (src_router, dst) pairs across
-      # the mesh. A single default-args run only ever exercises src_router=0
-      # -> (1,1); a transposed index affecting only one direction's wiring
-      # (e.g. South or West) would still pass that one case cleanly. The
-      # src==dst pairs are the diagonal loopback case, which is genuinely
-      # illegal here (the DUT's own NoLoopback assertion aborts) — skipped,
-      # not run. dst_router = dst_y*MX + dst_x, the row-major mapping
-      # router_idx() uses in tb/pkg/floo_tb_mesh_types_pkg.sv.
-      #
-      # Mesh dimensions are read from config/dut_config_mesh.svh rather than
-      # hardcoded, so the sweep can't silently fall out of sync with the
-      # DUT's actual topology and still print a completeness claim it
-      # doesn't earn. Parsing failure is fatal, not defaulted — a sweep that
-      # silently runs 0 pairs and prints PASS is exactly the bug this
-      # derivation exists to prevent.
-      MESH_CFG="config/dut_config_mesh.svh"
-      MX="$(grep -E "^\`define[[:space:]]+FLOO_VERIF_MESH_X[[:space:]]" "$MESH_CFG" | awk '{print $3}')"
-      MY="$(grep -E "^\`define[[:space:]]+FLOO_VERIF_MESH_Y[[:space:]]" "$MESH_CFG" | awk '{print $3}')"
-      if ! [[ "$MX" =~ ^[0-9]+$ ]] || ! [[ "$MY" =~ ^[0-9]+$ ]]; then
-        echo "[verilator] ERROR: could not parse FLOO_VERIF_MESH_X/_Y as integers from $MESH_CFG" >&2
-        echo "            got MX='$MX' MY='$MY'" >&2
-        exit 1
-      fi
-      NROUTERS=$(( MX * MY ))
-      : > logs/run_mesh.log   # combined evidence; each pair also gets its own log
-      fail=0
-      npairs=0
-      failed_pairs=()
-      for (( src=0; src<NROUTERS; src++ )); do
-        for (( dy=0; dy<MY; dy++ )); do
-          for (( dx=0; dx<MX; dx++ )); do
-            dst=$(( dy * MX + dx ))
-            if [ "$src" -eq "$dst" ]; then
-              continue   # diagonal: illegal loopback, skipped by design
-            fi
-            npairs=$(( npairs + 1 ))
-            PAIR_LOG="logs/run_mesh_src${src}_dst${dst}.log"
-            echo "[verilator] mesh sweep: src_router=$src -> dst_x=$dx dst_y=$dy (dst_router=$dst)"
-            if run_one_mesh "$PAIR_LOG" "+src_router=$src" "+dst_x=$dx" "+dst_y=$dy"; then
-              cat "$PAIR_LOG" >> logs/run_mesh.log
-            else
-              echo "[verilator] mesh run FAILED: pair src_router=$src -> dst_router=$dst (log: $PAIR_LOG)" >&2
-              cat "$PAIR_LOG" >> logs/run_mesh.log
-              failed_pairs+=("src${src}->dst${dst}")
-              fail=1
-            fi
-          done
-        done
-      done
-      if [ $fail -ne 0 ]; then
-        echo "[verilator] mesh run FAILED: ${#failed_pairs[@]}/$npairs pair(s) failed: ${failed_pairs[*]}" >&2
-        exit 1
-      fi
-      echo "[verilator] mesh run PASS: all $npairs non-loopback (src,dst) pairs passed"
-      echo "            (${MX}x${MY} mesh; per-pair logs: logs/run_mesh_src*_dst*.log, combined: logs/run_mesh.log, coverage: $MESH_COV_FILE)"
+    #
+    # The 12-pair (src,dst) sweep that used to live here is retired: it
+    # existed because the Phase-1 scaffolding could only drive one hand-built
+    # flit per run, so covering every link meant re-running the binary. The
+    # directed phase of floonoc_mesh_smoke_seq now sends every link in both
+    # directions plus both diagonals within a single run, with a scoreboard
+    # behind it rather than a $display banner.
+    set +e
+    log_and_run "$RUN_LOG" \
+      "$BUILD/obj_dir_mesh/Vtb_top_mesh" \
+        "+UVM_TESTNAME=${MESH_TEST:-floonoc_mesh_smoke_test}" +UVM_NO_RELNOTES \
+        "+verilator+coverage+file+${COV_FILE:-logs/coverage_mesh.dat}" \
+        "$@"
+    rc=$?
+    set -e
+    if [ $rc -ne 0 ]; then
+      echo "[verilator] mesh run FAILED (simulator exit $rc, log: $RUN_LOG)" >&2
+      exit 1
     fi
+    # UVM does not propagate error counts into the exit code; enforce here.
+    if ! grep -q '^UVM_ERROR :    0$' "$RUN_LOG" || \
+       ! grep -q '^UVM_FATAL :    0$' "$RUN_LOG" || \
+       ! grep -q 'TEST PASSED' "$RUN_LOG"; then
+      echo "[verilator] mesh run FAILED: UVM errors or missing PASS banner (log: $RUN_LOG)" >&2
+      exit 1
+    fi
+    echo "[verilator] mesh run PASS (log: $RUN_LOG, coverage: ${COV_FILE:-logs/coverage_mesh.dat})"
     ;;
 
   *)

@@ -6,9 +6,9 @@
 // New, independent top-level — does not touch tb_top.sv (the single-router
 // bench) or anything it depends on (floo_tb_types_pkg, dut_config.svh,
 // floonoc_router_if, floonoc_router_sva all stay single-router-only; this
-// file uses their mesh-scoped counterparts exclusively, to avoid a
-// `define macro collision between dut_config.svh and dut_config_mesh.svh
-// if both ever ended up in the same compile unit).
+// file uses their mesh-scoped counterparts exclusively). The two benches
+// are never compiled into the same Verilator invocation either — see
+// TB_SOURCES vs TB_MESH_SOURCES in scripts/run_verilator.sh.
 //
 // Wiring: every router uses the same 5-port floo_router as the single-router
 // bench (NumRoutes=NumInput=NumOutput=5, ports [North,East,South,West,Eject]
@@ -19,24 +19,27 @@
 // mesh router template (floo_axi_router.sv.mako) so hand-wired and
 // floogen-generated meshes agree on boundary behavior.
 //
-// Deliberately NOT included in this first checkpoint: floonoc_router_sva
-// per-router instances (it hard-imports floo_tb_types_pkg, which would
-// reintroduce the exact macro-collision risk this file exists to avoid —
-// a mesh-scoped equivalent is a follow-up, not required to validate wiring).
+// The mesh RTL itself lives in tb/top/floonoc_mesh_dut.sv; this file is the
+// TB shell: clock/reset, the interface, config_db publication, run_test(),
+// waves hook and the last-resort watchdog. It is a new, independent
+// top-level — nothing here touches tb_top.sv or anything it depends on.
 // -----------------------------------------------------------------------------
 
 module tb_top_mesh;
 
+  import uvm_pkg::*;
   import floo_pkg::*;
   import floo_tb_mesh_types_pkg::*;
-  // Deliberately no `import floonoc_uvm_pkg::*` here: that package
-  // `` `include``s dut_config.svh directly and imports floo_tb_types_pkg —
-  // both single-router-only. Pulling it into this compile unit would
-  // redefine dut_config_mesh.svh's macros (X_BITS, Y_BITS, ...) with the
-  // single-router bench's values via plain `define collision, silently
-  // corrupting one or the other depending on include order. A mesh UVM
-  // env (its own package, driving floonoc_mesh_if) is a follow-up; this
-  // checkpoint has no UVM layer yet — see the module header.
+  import floonoc_mesh_uvm_pkg::*;
+  // Deliberately no `import floonoc_uvm_pkg::*` (or floo_tb_types_pkg) here.
+  // The macro-collision mechanism that used to be the reason is gone — the
+  // mesh config macros are FLOO_VERIF_MESH_*-namespaced since Task 2 and
+  // collide with nothing — but the caution still holds for a different
+  // reason: floo_tb_types_pkg and floo_tb_mesh_types_pkg export the same
+  // symbol names (NumPorts, flit_t, hdr_t, dir_name, ...), so wildcard-
+  // importing both into one scope is a compile-time ambiguity error on the
+  // first unqualified use. Loud and immediate rather than silent, but still
+  // not something to do.
 
   // ---------------------------------------------------------------------------
   // Clock / reset
@@ -82,110 +85,17 @@ module tb_top_mesh;
   assign rif.data_out  = mesh_data_out;
 
   // ---------------------------------------------------------------------------
-  // No UVM entry yet — this checkpoint validates the RTL wiring only: a
-  // single directed 2-hop flit driven by hand at router 0, checked for
-  // (a) arriving at the CORRECT router's Eject port with the correct
-  // payload and (b) never surfacing at either wrong router along the way.
-  // This is temporary scaffolding for the wiring checkpoint, not a
-  // regression test — a mesh UVM env (driver/monitor/scoreboard over
-  // floonoc_mesh_if, its own package) is the next step, mirroring
-  // floonoc_uvm_pkg but built against floo_tb_mesh_types_pkg's multi-hop
-  // exp_path instead of the single-router exp_out_port.
+  // UVM entry
   //
-  // MUST BE REMOVED when the mesh UVM env lands (Task 8): the `initial`
-  // block below procedurally drives `rif.ready_out`, `rif.valid_in` and
-  // `rif.data_in` directly. A UVM driver will drive those same interface
-  // variables — leaving this block in alongside it is a silent last-write-
-  // wins multiple-driver race, with no compile or runtime diagnostic. The
-  // same removal applies to the rest of this Phase-1 scaffolding below —
-  // the `valid_out_seen`/`smoke_ok` sticky-flag state, the `gen_misroute_watch`
-  // generate loop that drives it, and the smoke-check `initial` block that
-  // reads it — all of which exist only to check this hand-driven flit and
-  // become dead code once a UVM scoreboard takes over that job.
+  // (The Phase-1 hand-rolled directed smoke check that used to live here was
+  // temporary scaffolding for the RTL wiring checkpoint, never a regression
+  // test. Its job is fully subsumed by the directed phase of
+  // floonoc_mesh_smoke_seq, which exercises every link in both directions and
+  // both mesh diagonals, with a scoreboard behind it.)
   // ---------------------------------------------------------------------------
-  // Sticky per-router "did this Eject port ever assert valid_out" flags —
-  // simpler and safer than a fork/join_none per non-destination router.
-  // The smoke check below reads these once at the end instead of racing
-  // dynamic processes.
-  // Sticky "did this Eject port ever assert valid_out" per router, for
-  // EVERY router — the initial block below decides at runtime (plusargs)
-  // which one was the intended destination, so the watch can't exclude one
-  // at elaboration time like a single fixed-destination check could.
-  bit valid_out_seen[NumRouters];
-  bit smoke_ok; // module-scope, not a fork-local automatic: the fork below
-                // writes it from a child process that must outlive nothing
-  for (genvar r = 0; r < NumRouters; r++) begin : gen_misroute_watch
-    always @(posedge clk) if (rif.valid_out[r]) valid_out_seen[r] <= 1'b1;
-  end
-
   initial begin
-    automatic flit_t f;
-    automatic int unsigned src_router, dst_x, dst_y, dst_router;
-    rif.ready_out = '1; // sink every Eject port immediately
-    rif.valid_in  = '0;
-    rif.data_in   = '0;
-    foreach (valid_out_seen[r]) valid_out_seen[r] = 1'b0;
-
-    // +src_router=<0..3> +dst_x=<0|1> +dst_y=<0|1>, default: router 0 (0,0)
-    // to (1,1) = router 3, the longest path in a 2x2 mesh (2 hops: East
-    // then North, or North then East depending on X-first ordering —
-    // exp_path settles which). Overridable so the same binary can exercise
-    // the reverse-direction links (South/West) without recompiling.
-    src_router = 0;
-    dst_x      = 1;
-    dst_y      = 1;
-    void'($value$plusargs("src_router=%0d", src_router));
-    void'($value$plusargs("dst_x=%0d", dst_x));
-    void'($value$plusargs("dst_y=%0d", dst_y));
-    dst_router = router_idx(dst_x, dst_y);
-
-    @(posedge rst_n);
-    repeat (3) @(posedge clk);
-
-    f            = '0;
-    f.hdr.dst_id = '{x: x_bits_t'(dst_x), y: y_bits_t'(dst_y), port_id: '0};
-    f.hdr.last   = 1'b1;
-    f.payload    = payload_t'(64'hCAFE_D00D_0000_2A2A);
-
-    @(negedge clk);
-    rif.valid_in[src_router] = 1'b1;
-    rif.data_in[src_router]  = f;
-    wait (rif.ready_in[src_router] === 1'b1);
-    @(negedge clk);
-    rif.valid_in[src_router] = 1'b0;
-    $display("[MESH-SMOKE] flit accepted at router %0d, expecting delivery at router %0d",
-              src_router, dst_router);
-
-    smoke_ok = 1'b0;
-    fork
-      begin
-        wait (rif.valid_out[dst_router] === 1'b1);
-        if (rif.data_out[dst_router].payload === f.payload) begin
-          $display("[MESH-SMOKE] payload 0x%016h delivered at router %0d",
-                    rif.data_out[dst_router].payload, dst_router);
-          smoke_ok = 1'b1;
-        end else begin
-          $display("[MESH-SMOKE] FAIL: router %0d asserted valid_out with wrong payload 0x%016h",
-                    dst_router, rif.data_out[dst_router].payload);
-        end
-      end
-      #200ns;
-    join_any
-    disable fork;
-    #20ns; // let a same-cycle misroute latch before the final check
-
-    if (!smoke_ok) $display("[MESH-SMOKE] FAIL: flit never delivered within 200ns");
-    foreach (valid_out_seen[r]) begin
-      if (r != dst_router && valid_out_seen[r]) begin
-        $display("[MESH-SMOKE] FAIL: unexpected valid_out at router %0d (expected only %0d)",
-                  r, dst_router);
-        smoke_ok = 1'b0;
-      end
-    end
-
-    if (smoke_ok) $display("*** MESH-SMOKE PASSED ***");
-    else           $display("*** MESH-SMOKE FAILED ***");
-    $finish;
+    uvm_config_db#(virtual floonoc_mesh_if)::set(null, "*", "vif", rif);
+    run_test();
   end
 
   // ---------------------------------------------------------------------------
