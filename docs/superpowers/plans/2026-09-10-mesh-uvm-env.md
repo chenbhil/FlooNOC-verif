@@ -284,6 +284,36 @@ follow-up; until it is in place the genericity claim should not be repeated.
 index, and the only place that can report a malformed header rather than
 propagate it.
 
+
+**A9 — Task 6's sequence could not name `route_direction_e` unqualified
+(found during execution, 2026-09-10).** The task's code block declared
+`route_direction_e dir = route_direction_e'(d);` inside
+`floonoc_mesh_uvm_pkg`, which fails to compile:
+
+```
+%Error: Can't find typedef/interface: 'route_direction_e'
+```
+
+The enum is defined in `floo_pkg`. `floo_tb_mesh_types_pkg` imports it
+(`:17`) but a wildcard *import* does not re-export, so the name is not
+visible to `floonoc_mesh_uvm_pkg`, which imports only
+`floo_tb_mesh_types_pkg::*`. The helper *calls* work regardless —
+`has_neighbor(r, dir)` resolves its formal's type in the declaring package —
+so this bites only where the type is spelled out, and Task 6 is the first
+place in either UVM package that does. The single-router bench never names
+it either, which is why the shape it was copied from gave no warning.
+
+Fixed by qualifying both the declaration and the cast as
+`floo_pkg::route_direction_e`, in the sequence only. The two rejected
+alternatives, for the record: adding `import floo_pkg::*;` to
+`floonoc_mesh_uvm_pkg` widens that package's name surface to all of
+`floo_pkg` next to a wildcard import of `floo_tb_mesh_types_pkg`, for one
+type; adding `export floo_pkg::*;` to `floo_tb_mesh_types_pkg` re-exports
+the same surface one level down and changes a file two benches' worth of
+tasks already depend on. A qualified reference in the one file that needs
+it is the smaller change, and it says where the type comes from at the
+point of use.
+
 ---
 
 ## File structure
@@ -1431,7 +1461,10 @@ class floonoc_mesh_smoke_seq extends uvm_sequence #(floonoc_mesh_flit_item);
     // the other half.
     for (int unsigned r = 0; r < NumRouters; r++) begin
       for (int unsigned d = 0; d < 4; d++) begin
-        route_direction_e dir = route_direction_e'(d);
+        // Explicitly qualified: the direction enum lives in floo_pkg, and
+        // floo_tb_mesh_types_pkg imports it without re-exporting, so the
+        // type name is not visible here through that package alone.
+        floo_pkg::route_direction_e dir = floo_pkg::route_direction_e'(d);
         if (!has_neighbor(r, dir)) continue;
         send_directed(r, neighbor_idx(r, dir),
                       $sformatf("link R%0d.%0s", r, dir_name(d)));
