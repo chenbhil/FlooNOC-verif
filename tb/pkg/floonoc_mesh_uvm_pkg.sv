@@ -23,5 +23,8 @@ package floonoc_mesh_uvm_pkg;
   import floo_tb_mesh_types_pkg::*;
 
   `include "floonoc_mesh_flit_item.sv"
+  `include "floonoc_mesh_driver.sv"
+  `include "floonoc_mesh_monitor.sv"
+  `include "floonoc_mesh_agent.sv"
 
 endpackage : floonoc_mesh_uvm_pkg
