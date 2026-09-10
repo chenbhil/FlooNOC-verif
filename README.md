@@ -7,7 +7,8 @@ simulated with **Verilator 5.052** and the **Accellera UVM 1800.2-2017
 RTL + toolchain + methodology stack end-to-end on the smallest meaningful
 DUT — it does not verify the whole NoC.
 
-**Status: PASSING** — see `docs/compatibility.md` for the full report.
+**Status: PASSING** — both the single-router bench and the 2x2 mesh bench;
+see `docs/compatibility.md` for the full report.
 
 ## Architecture overview
 
@@ -67,6 +68,46 @@ UVM_INFO ... [RESULT] *** TEST PASSED *** (25 flits accepted, 25 delivered, 25 m
 UVM_ERROR :    0
 [verilator] run PASS (log: logs/run.log, coverage: logs/coverage.dat)
 ```
+
+### Mesh bench (2x2 mesh of routers)
+
+A second, independent bench over a 2x2 mesh of `floo_router` instances
+(`tb/top/floonoc_mesh_dut.sv`, driven by `floonoc_mesh_uvm_pkg`). It shares
+no code with the single-router bench and builds as a separate Verilator
+binary with its own top module, object directory and coverage file — the two
+must never be compiled into one invocation (see `docs/known_issues.md`).
+
+```sh
+export UVM_HOME=/path/to/1800.2-2017-1.0
+make sources
+make lint-mesh          # UVM-free elaboration of the mesh RTL
+make build-mesh         # compile tb_top_mesh + floonoc_mesh_uvm_pkg
+make run-mesh           # positive smoke test (expects TEST PASSED)
+make run-negative-mesh  # 3 fault injections, each must be caught
+make cov-mesh           # functional / assertion / code coverage split
+```
+
+Expected `make run-mesh` tail:
+
+```
+UVM_INFO ... [COV] sampled 27 flits, flit_cg coverage = 85.7%
+UVM_INFO ... [SB] accepted=27 delivered=27 matched=27 mismatched=0 pending=0
+UVM_INFO ... [RESULT] *** TEST PASSED *** (27 flits accepted, 27 delivered, 27 matched, 0 mismatches)
+[verilator] mesh run PASS (log: logs/run_mesh.log, coverage: logs/coverage_mesh.dat)
+```
+
+Endpoints are router indices, not port directions: the TB touches only each
+router's Eject port, and North/East/South/West are inter-router links inside
+the mesh DUT. Traffic is generated from the topology helpers rather than a
+literal table — every physical link in both directions, both mesh diagonals
+(guaranteeing a full-diameter route), then constrained-random legal flits.
+
+Mesh size is set in `config/dut_config_mesh.svh`. The UVM layer derives every
+bound from it (`NumRouters`, `MeshDiameter`), so no mesh dimension is
+hardcoded above the config header — though only the 2x2 shape is verified,
+and `floo_tb_mesh_types_pkg`'s elaboration-time `MeshCoordWidthGuard` is what
+stops a coordinate width too narrow for the configured dimensions from
+silently truncating.
 
 ## Pinned revisions
 

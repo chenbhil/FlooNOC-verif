@@ -11,12 +11,15 @@
 #   make clean    - remove generated build outputs
 #   make doctor   - print tool/dependency/DUT resolution status
 #
-#   make lint-mesh  - Verilator lint-only pass on the mesh DUT, no UVM/TB
-#   make lint-mesh-uvm - fast compile-check of the mesh UVM classes, no top
-#   make build-mesh - compile the mesh bench (own top module, own obj dir)
-#   make run-mesh   - run the mesh UVM smoke test (expects PASS)
-#   make run-negative-mesh - mesh fault-injection self-tests (must all fail)
-#   make cov-mesh   - annotated mesh coverage report (logs/coverage_report_mesh/)
+# Mesh bench (2x2 mesh of routers) — a separate Verilator binary throughout:
+# own top module, own obj dir, own coverage file. Never compiled with the
+# single-router bench in one invocation (see docs/known_issues.md).
+#   make lint-mesh          - Verilator lint-only pass on the mesh RTL (no UVM)
+#   make lint-mesh-uvm      - fast compile-check of the mesh UVM classes, no top
+#   make build-mesh         - compile the mesh UVM smoke test (tb_top_mesh)
+#   make run-mesh           - execute the mesh smoke test
+#   make run-negative-mesh  - mesh fault-injection self-tests (must all fail)
+#   make cov-mesh           - mesh coverage report (logs/coverage_report_mesh/)
 # -----------------------------------------------------------------------------
 
 # --- Pinned revisions ----------------------------------------------------------
@@ -154,3 +157,4 @@ doctor:
 	@echo "uvm       : $(UVM_HOME) $$(test -f $(UVM_HOME)/src/uvm_pkg.sv && echo OK || echo MISSING)"
 	@echo "dut       : floo_router (5 ports, XYRouting, 1 VC) — see docs/dut_scope.md"
 	@echo "sources   : $$(test -f build/sources.f && echo 'build/sources.f ('$$(grep -cv '+incdir+' build/sources.f)' files)' || echo 'not generated (run make sources)')"
+	@echo "mesh      : $$(test -x build/obj_dir_mesh/Vtb_top_mesh && echo 'built (build/obj_dir_mesh/Vtb_top_mesh)' || echo 'not built (run make build-mesh)')"

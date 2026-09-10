@@ -84,3 +84,96 @@ Verilator requests a larger stack for deep UVM call chains; macOS caps
 `ulimit -s`. No observed failure at this design size. If deep recursion
 ever crashes, re-launch via a thread with a larger stack or raise the
 hard limit.
+
+## KI-6 — The two benches must never share a Verilator invocation (by design)
+
+**Status:** structural, permanent. Not a defect — a rule the build enforces.
+
+`floo_tb_types_pkg` (single-router) and `floo_tb_mesh_types_pkg` (mesh) both
+export `NumPorts`, `FlitDataW`, `InFifoDepth`, `OutFifoDepth`, `x_bits_t`,
+`y_bits_t`, `port_id_t`, `payload_t`, `flit_t`, `xy_id_t`, `hdr_t` and
+`dir_name`, with **different values** — the mesh's coordinate widths and port
+counts describe a different DUT. `config/dut_config.svh` and
+`config/dut_config_mesh.svh` are likewise parallel headers.
+
+Two independent guards keep them apart:
+
+1. **Separate compiles.** `scripts/run_verilator.sh` keeps `TB_SOURCES` and
+   `TB_MESH_SOURCES` disjoint, with separate top modules (`tb_top` /
+   `tb_top_mesh`), object directories (`build/obj_dir` /
+   `build/obj_dir_mesh`) and coverage files (`logs/coverage.dat` /
+   `logs/coverage_mesh.dat`).
+2. **Namespaced macros.** Every mesh config macro is `FLOO_VERIF_MESH_*`, so
+   even if both headers reached one compile unit there is no `` `define``
+   collision. The convention for any future third bench is
+   `FLOO_VERIF_<BENCH>_*`; the older single-router header keeps the
+   unprefixed names for now.
+
+What is left is the *good* failure mode: a file wildcard-importing both
+packages gets a **compile-time ambiguity error** naming the exact symbol, on
+the first unqualified use. Loud, immediate, and self-defending — unlike the
+silent macro substitution the namespacing closed. No file imports both.
+
+## KI-7 — Verilator cannot track per-bit drivenness through the mesh's generate wiring
+
+**Status:** upstream tool limitation, confirmed with four minimal repros.
+
+`make lint-mesh` runs with `-Wwarn-UNDRIVEN` (the single-router `lint` does
+not), which is a net positive but does **not** close the gap it was added
+for. Verilator stops per-bit drivenness tracking once a multi-dimensional
+packed array slice is read through a genvar-indexed submodule port connection
+inside a generate loop — exactly the `.valid_i(dut_valid_in[r])` pattern in
+`floonoc_mesh_dut.sv`'s `gen_routers`. A `split_var` `.vlt` directive had no
+effect.
+
+**Consequence — the boundary-tie-off blind spot.** A missing `gen_boundary`
+tie-off in `floonoc_mesh_dut.sv` is undetectable on Verilator under this
+build config: `UNDRIVEN` does not see it, and `config/verilator.f`'s
+`--x-initial 0` makes the undriven bit read `0`, which is coincidentally the
+correct tie-off value. It was proven by fault injection that deleting a
+single `assign` passed both `make lint-mesh` and `make run-mesh`.
+
+**Do not re-attempt an X-injection check for this.** A `check-mesh-x` target
+was built and abandoned; the reasons are structural, not effort:
+
+- `--x-initial unique` at compile time is a trap. It only makes Verilator
+  *capable* of a non-zero reset; `VerilatedContext::randReset()` still
+  defaults to `0` at runtime, so the compile flag alone silently reproduces
+  the exact masking it appears to remove. A green run under that flag proves
+  nothing while looking like it proves everything. Forcing the behavior needs
+  the runtime plusarg `+verilator+rand+reset+1`.
+- `+verilator+rand+reset+N` is global and cannot be scoped. It also forces
+  the vendor DUT's legitimately-undriven internals (`past_handshakes_d`, the
+  arbiter-tree padding in `rr_arb_tree.sv` / `lzc.sv`, the disabled
+  collective path in `floo_output_arbiter.sv`), which perturbs the arbiter
+  enough that *every* router spuriously asserts `valid_out` on correct,
+  unmodified RTL. A gate that fails on correct input is worse than no gate.
+
+**What does cover it:** the smoke sequence's directed phase drives every
+physical link in both directions and both diagonals, so every *consequential*
+omission (a dropped `gen_eject_map` or `gen_connected` assign) fails the run.
+The residual exposure is confined to a future edit of `floonoc_mesh_dut.sv`.
+
+**If you run this bench on xezim:** xezim does not mask X the way
+`--x-initial 0` does, so a missing boundary tie-off would show up there as X
+propagation and could easily be misattributed to the simulator. Check the
+tie-offs in `floonoc_mesh_dut.sv` before filing a simulator bug.
+
+## KI-8 — Mesh scoreboard iteration shapes to re-verify on xezim
+
+**Status:** forward-looking note; nothing wrong on Verilator.
+
+The mesh scoreboard's `expected [NumRouters][NumRouters][$]` is a class
+property that is an **array of collections**, and `pending_count()` /
+`dump_pending()` iterate it with `foreach (expected[i, o])`. That is exactly
+the shape of two xezim bugs this workspace has already paid for (see
+`CLAUDE.md` bugs 26 and 17): the element queues had no storage at all, and
+the multi-index `foreach` both mis-iterated and made a scoreboard check
+silently vacuous. Both are fixed upstream, and four sub-cases of bug 26 were
+deliberately left open.
+
+The mesh bench has **not** been run on xezim. When it first is, do not read
+`pending=0` as evidence of "nothing in flight" until the iteration itself is
+confirmed to work — the failure mode is a check that passes without checking.
+The driver's `vif.data_in[r] <= item.as_flit()` is likewise bug 20's exact
+shape (a packed-array-element NBA through a virtual interface).

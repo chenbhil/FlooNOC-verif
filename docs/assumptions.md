@@ -89,6 +89,52 @@ and fire internal assertions). The stimulus constraints exclude them
 (see docs/dut_scope.md "Legal traffic"). This mirrors the requirement
 that undocumented behavior must not be guessed.
 
+## Mesh-bench assumptions
+
+These apply to `tb_top_mesh` only. The single-router assumptions above are
+unchanged by the mesh bench, which shares no code with it.
+
+### A4-M — Per-pair ordering holds across the mesh
+
+The mesh scoreboard's RM6 check assumes that two flits sharing the same
+(source router, destination router) pair are delivered in acceptance order.
+This is not inherited from A4 (which reasons about one router); it follows
+independently from three properties of this configuration:
+
+1. Dimension-order XY routing is deterministic and stateless — the route
+   depends only on `hdr.dst_id` and the current router's `xy_id_i`
+   (`hw/floo_route_select.sv`, `gen_xy_routing`). Two flits with the same
+   destination injected at the same router therefore traverse the identical
+   sequence of routers and ports.
+2. At every stage between them the storage is FIFO: the per-input
+   `stream_fifo` (`InFifoDepth`) and the per-output fifo (`OutFifoDepth`).
+3. `hdr.last == 1` on every flit, so the wormhole route lock opens and
+   closes per flit and cannot interleave a packet.
+
+Nothing on that path can reorder two same-pair flits relative to each other.
+Cross-pair ordering is deliberately NOT assumed, exactly as in A4.
+
+**Invalidated if:** routing becomes adaptive or source-routed, a stage
+between two same-pair flits stops being FIFO, or multi-flit packets are
+introduced (`hdr.last == 0`).
+
+### A5-M — `hdr.src_id` survives every hop
+
+The mesh transaction encodes its injection router in `hdr.src_id` so the
+output-side monitor can recover it — the monitor sees only `rif.data_out[r]`,
+and the scoreboard keys its expectation FIFOs on (src router, dst router).
+
+**Basis:** `hw/floo_route_select.sv:96` rewrites `hdr.dst_id` only under
+`SourceRouting`; under `XYRouting` the header passes through every hop
+unmodified (`:190`, `channel_o = channel_i`). `hdr.src_id` is read only by
+`floo_route_xymask.sv`, the multicast path, which is inert in this
+configuration (`collective_op == Unicast`, `EnCollective` off). Confirmed in
+practice by the first end-to-end run: all 12 directed flits, including the
+2-hop diagonals, were matched on a key that includes the decoded `src_id`,
+which cannot happen if the field is rewritten in flight.
+
+**Invalidated if:** `SourceRouting` or collective operations are enabled.
+
 ## Environment-level decisions
 
 - **E1:** Bender is driven inside the pinned FlooNoC checkout

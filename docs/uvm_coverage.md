@@ -59,6 +59,64 @@ not verified against the standard text.
 | `` `uvm_info / `uvm_error / `uvm_fatal `` | throughout (tests, scoreboard, driver, monitor) | structured messaging; errors gate pass/fail | Reporting |
 | `uvm_report_server::get_server()` | `tb/tests/floonoc_smoke_test.sv:76` | reads final `UVM_ERROR` count for the result banner | Reporting |
 
+## Mesh bench functional coverage
+
+`tb/coverage/floonoc_mesh_cov.sv`, a `uvm_subscriber #(floonoc_mesh_flit_item)`
+on the mesh monitor's **output** analysis port, so every sample is a flit the
+DUT actually delivered.
+
+| Coverpoint | Samples | Bins | Derived from |
+|---|---|---|---|
+| `cp_src_router` | `t.src_router`, decoded from `hdr.src_id` | one bin per router | `NumRouters` |
+| `cp_dst_router` | `t.out_router`, the physical Eject port it surfaced on | one bin per router | `NumRouters` |
+| `cp_hops` | `t.exp_hops()` | `[1:MeshDiameter]` | `MeshDiameter = MeshX+MeshY-2` |
+| `cp_backpressure` | `t.backpressured` | `stalled` / `free` | — |
+| `x_src_dst` | cross of `cp_src_router` x `cp_dst_router` | `NumRouters^2` | see the ceiling note below |
+
+No bin range is hardcoded: a larger mesh in `config/dut_config_mesh.svh`
+rescales all of them with no edit here.
+
+`cp_dst_router` deliberately samples the **observed** exit router rather than
+the predicted destination, so coverage records what the DUT did, not what the
+model expected. A misroute therefore shows up in coverage as well as in the
+scoreboard.
+
+### Read `x_src_dst` against a 75% ceiling, not 100%
+
+`c_legal_route` forbids `src_router == dst_router`, so `NumRouters` of the
+`NumRouters^2` cross bins are structurally unreachable — 4 of 16 on a 2x2
+mesh, capping the cross at `(N^2-N)/N^2` = **75%**.
+
+That would normally be expressed as
+`ignore_bins loopback = x_src_dst with (cp_src_router == cp_dst_router);`,
+but **Verilator 5.052 cannot parse a `with` clause on a cross**:
+
+```
+%Error: tb/coverage/floonoc_mesh_cov.sv:42:40: syntax error, unexpected
+        with-then-(, expecting '('
+```
+
+The alternative — hand-enumerating `binsof`/`intersect` per router — would
+hardcode the mesh size, which is exactly the genericity the file is built to
+keep. So the unreachable bins are left in and documented here instead. The
+covergroup carries the same note at the point of use.
+
+Measured on the 27-flit smoke run (12 directed + 15 random), `make cov-mesh`:
+
+| Item | Result |
+|---|---|
+| `flit_cg` overall | **85.7% (24/28)** |
+| `cp_src_router` | 100% (4/4) |
+| `cp_dst_router` | 100% (4/4) |
+| `cp_hops` | 100% (2/2) |
+| `cp_backpressure` | 100% (2/2) |
+| `x_src_dst` | **75% (12/16)** — at the ceiling |
+
+The four unhit cross bins are exactly `r[0]_x_r[0]`, `r[1]_x_r[1]`,
+`r[2]_x_r[2]` and `r[3]_x_r[3]`: the `src == dst` diagonal. All 12 legal
+pairs are hit. There is no stimulus gap behind the 85.7% — it is 24 of 28
+with 4 bins unreachable by construction, and 24 of 24 reachable bins hit.
+
 ## Not exercised at this milestone
 
 Intentionally out of scope for a smoke bench (candidates for later milestones,
