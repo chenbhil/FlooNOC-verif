@@ -1,8 +1,8 @@
-# FlooNoC × Verilator 5.050 × UVM — Smoke-Test Workspace
+# FlooNoC × Verilator 5.052 × UVM — Smoke-Test Workspace
 
 Independent, reproducible UVM verification scaffold around the
 [PULP FlooNoC](https://github.com/pulp-platform/FlooNoC) `floo_router`,
-simulated with **Verilator 5.050** and the **Accellera UVM 1800.2-2017
+simulated with **Verilator 5.052** and the **Accellera UVM 1800.2-2017
 1.0** library. This is a feasibility/scaffolding milestone: it proves the
 RTL + toolchain + methodology stack end-to-end on the smallest meaningful
 DUT — it does not verify the whole NoC.
@@ -29,7 +29,7 @@ dependencies resolve through Bender at `Bender.lock` revisions.
 
 ## Prerequisites
 
-- **Verilator 5.050 exactly** (build fails early on other versions;
+- **Verilator 5.052 exactly** (build fails early on other versions;
   override with `REQUIRED_VERILATOR=` at your own risk)
 - **Bender** ≥ 0.28 (`brew install bender`)
 - **lz4** headers for FST tracing on macOS (`brew install lz4`)
@@ -75,7 +75,7 @@ UVM_ERROR :    0
 | FlooNoC | `14c253c996fcdc78b793fe28ac18964769b768df` (`v0.8.4`) |
 | HDL deps | `./Bender.lock` (version-controlled source of truth; `make setup` fails on drift vs. the pinned checkout) |
 | UVM | Accellera 1800.2-2017 kit 1.0 (tested; not version-gated — any compatible 1800.2 UVM should work) |
-| Verilator | 5.050 (enforced) |
+| Verilator | 5.052 (enforced) |
 
 ## Layout
 
@@ -91,11 +91,13 @@ build/ logs/ waves/   generated (gitignored)
 
 ## Known limitations
 
-- FST writing crashes intermittently at exit due to a Verilator 5.050
+- FST writing crashed intermittently at exit on Verilator 5.050 due to a
   fstcpp writer bug (`docs/known_issues.md` KI-1, upstream issue draft in
-  `docs/verilator_fst_issue.md`); `make waves` retries automatically
-  (measured 10/10 green) and `make waves-vcd` is a deterministic
-  fallback — prefer it where CI must not depend on retries.
+  `docs/verilator_fst_issue.md`); on 5.052 it has not reproduced in a small
+  retest (3/3 clean), but that is too few runs to call it fixed given how
+  intermittent it was. `make waves` still retries automatically and
+  `make waves-vcd` remains a deterministic fallback — prefer it where CI
+  must not depend on retries.
 - UVM runs with `UVM_NO_DPI`: benign component-name warnings at startup;
   regex config_db patterns unavailable (KI-2).
 - Covergroups require `with function sample(...)` style; array bins are

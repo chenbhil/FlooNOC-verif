@@ -2,6 +2,14 @@
 
 ## KI-1 — Verilator 5.050 fstcpp FST writer: intermittent crash at exit (upstream tool bug)
 
+**Status on 5.052 (2026-09-09):** did not reproduce in 3/3 `make waves`
+attempts after the version bump from 5.050. Too small a sample to call it
+fixed — the original measured rate was ~23% per attempt, so 3/3 clean is not
+yet statistically distinguishing "fixed" from "still ~23% and we got
+lucky" (p(3 clean | still broken) ≈ 0.77³ ≈ 46%). Treat as open until a
+larger sample (10+ raw attempts, not `make waves`-retried) is run on 5.052;
+the retry logic below stays in place either way since it's cheap insurance.
+
 **Symptom:** with `+trace`, ~10–25% of runs die at exit with SIGTRAP
 (exit 133, empty FST) or SIGABRT (exit 134, truncated FST,
 `FST_CHECK failed: enc == EncodingType::BINARY`). The simulation itself

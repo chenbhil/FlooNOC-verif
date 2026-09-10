@@ -3,7 +3,7 @@
 // output analysis port). Scope-appropriate items only:
 //   input port, output port, backpressure, input x output.
 // Goal at this milestone: prove covergroup sampling/bins/cross work
-// end-to-end under Verilator 5.050 — not coverage closure.
+// end-to-end under Verilator 5.052 — not coverage closure.
 //
 // Note: the covergroup uses `with function sample(...)` arguments, since
 // coverpoints referencing enclosing class members are unsupported in

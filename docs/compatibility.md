@@ -1,14 +1,16 @@
-# Verilator 5.050 / FlooNoC Compatibility Report
+# Verilator 5.052 / FlooNoC Compatibility Report
 
 Generated after the first fully passing smoke run (2026-07-12); updated
 2026-07-13 with the coverage split, negative self-tests, measured FST
-retry statistics, VCD fallback, and tracked lockfile.
+retry statistics, VCD fallback, and tracked lockfile. Re-verified 2026-09-09
+on Verilator 5.052 (bumped from 5.050): lint, build, positive run, and all
+three negative self-tests re-confirmed green with no bench changes.
 
 ## Tool and revision pins
 
 | Item | Value |
 |---|---|
-| Verilator | `Verilator 5.050 2026-07-01 rev vUNKNOWN-built20260701` (Homebrew, macOS arm64) |
+| Verilator | `Verilator 5.052 2026-09-05 rev vUNKNOWN-built20260905` (Homebrew, macOS arm64); was `5.050 2026-07-01` before the 2026-09-09 bump |
 | Bender | 0.32.1 |
 | FlooNoC | `14c253c996fcdc78b793fe28ac18964769b768df` (tag `v0.8.4`), unmodified |
 | common_cells | 1.39.0 @ `9ca8a7655f741e7dd5736669a20a301325194c28` (Bender.lock) |
@@ -89,12 +91,12 @@ Run: `Vtb_top +UVM_TESTNAME=floonoc_smoke_test +UVM_NO_RELNOTES
 **Core FlooNoC DUT RTL: zero unsupported constructs.** Everything in the
 router's elaboration closure (7 floo files + common_cells) compiles,
 elaborates, simulates, and passes its own embedded SVA under Verilator
-5.050 without modification.
+5.052 (and, before the 2026-09-09 bump, 5.050) without modification.
 
 ## Verdict
 
 FlooNoC's router-level RTL **is usable as a DUT for a spec-driven UVM
-project under Verilator 5.050**. The smoke milestone passes end-to-end,
+project under Verilator 5.052**. The smoke milestone passes end-to-end,
 and the checking path is proven non-vacuous by three negative self-tests
 that each force a controlled failure. The only tool-level defect found
 (KI-1) affects waveform writing, not simulation semantics; it is covered

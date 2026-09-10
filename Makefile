@@ -1,5 +1,5 @@
 # -----------------------------------------------------------------------------
-# FlooNoC router UVM smoke bench (Verilator 5.050)
+# FlooNoC router UVM smoke bench (Verilator 5.052)
 #
 #   make setup    - fetch FlooNoC (pinned) + Bender deps, verify UVM
 #   make sources  - generate deterministic Verilator filelist (build/sources.f)
@@ -20,7 +20,7 @@ export FLOONOC_COMMIT ?= 14c253c996fcdc78b793fe28ac18964769b768df
 # e.g.  make setup UVM_HOME=/path/to/1800.2-2017-1.0
 # `make setup` / `make doctor` report clearly if it is unset or wrong.
 export UVM_HOME       ?=
-export REQUIRED_VERILATOR ?= 5.050
+export REQUIRED_VERILATOR ?= 5.052
 
 FLOONOC_DIR := rtl_or_vendor/floonoc
 

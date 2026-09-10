@@ -19,7 +19,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-REQUIRED_VERILATOR="${REQUIRED_VERILATOR:-5.050}"
+REQUIRED_VERILATOR="${REQUIRED_VERILATOR:-5.052}"
 UVM_HOME="${UVM_HOME:?UVM_HOME must be set (see Makefile)}"
 BUILD="$ROOT/build"
 mkdir -p "$BUILD" logs waves
