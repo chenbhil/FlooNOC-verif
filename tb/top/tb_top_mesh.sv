@@ -96,7 +96,12 @@ module tb_top_mesh;
   // block below procedurally drives `rif.ready_out`, `rif.valid_in` and
   // `rif.data_in` directly. A UVM driver will drive those same interface
   // variables — leaving this block in alongside it is a silent last-write-
-  // wins multiple-driver race, with no compile or runtime diagnostic.
+  // wins multiple-driver race, with no compile or runtime diagnostic. The
+  // same removal applies to the rest of this Phase-1 scaffolding below —
+  // the `valid_out_seen`/`smoke_ok` sticky-flag state, the `gen_misroute_watch`
+  // generate loop that drives it, and the smoke-check `initial` block that
+  // reads it — all of which exist only to check this hand-driven flit and
+  // become dead code once a UVM scoreboard takes over that job.
   // ---------------------------------------------------------------------------
   // Sticky per-router "did this Eject port ever assert valid_out" flags —
   // simpler and safer than a fork/join_none per non-destination router.

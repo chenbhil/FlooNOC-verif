@@ -40,11 +40,31 @@ lint_off -rule WIDTHTRUNC -file "*tb/*" -match "*uvm_report_enabled*"
 lint_off -rule WIDTHTRUNC -file "*tb/*" -match "*METHODCALL 'randomize'*"
 
 // [core FlooNoC DUT RTL: floo_router.sv — UNDRIVEN, mesh lint only]
-// `past_handshakes_d` (the NBA-target twin of `past_handshakes_q`) is
-// genuinely never assigned anywhere in floo_router.sv at this FlooNoC pin —
-// a pre-existing upstream dead-code leftover, not something either bench
-// introduced. Only surfaces under `-Wwarn-UNDRIVEN` (make lint-mesh);
-// the single-router `lint` target does not enable this rule, so this entry
-// is inert there. Matched on both file and variable name so it cannot mask
-// an UNDRIVEN finding anywhere else, including elsewhere in this same file.
-lint_off -rule UNDRIVEN -file "*/floonoc/hw/floo_router.sv" -match "*past_handshakes_d*"
+// `past_handshakes_d` DOES have a driver in floo_router.sv (the assign at
+// its `gen_multicast` generate branch) — it is parameterization-dependent,
+// not dead code: this bench's `EnMultiCast=0` elaborates `gen_unicast`
+// instead, so that driver is elaborated away, while the `` `FF `` flop for
+// `past_handshakes_q` sits outside the generate and always exists. Upstream
+// itself flags the layout with a `// TODO (lleone): Move the folloiwng FF
+// inside the multicast` comment right above it. Only surfaces under
+// `-Wwarn-UNDRIVEN` (make lint-mesh); the single-router `lint` target does
+// not enable this rule, so this entry is inert there.
+//
+// `-match` is pinned to the warning's MESSAGE BODY ("Signal is not driven:
+// '<name>'"), not just the variable name, because Verilator's `-match`
+// matches against the full formatted warning block INCLUDING the echoed
+// source line — and the declaration `past_handshakes_q, past_handshakes_d`
+// is one line, so a pattern on the bare name (e.g. `*past_handshakes_q*`)
+// would suppress this warning too, and would keep suppressing an UNDRIVEN
+// on EITHER signal even if the other one lost its driver. Pinning to
+// `*not driven: 'past_handshakes_d'*` means the pattern only matches a
+// warning whose message body names this exact signal — verified directly:
+// swapping in `*not driven: 'past_handshakes_q'*` does NOT suppress this
+// warning (`make lint-mesh` fails with it), even though both names sit on
+// the same echoed source line.
+//
+// W7/W8 above share this same over-broad property (their `-match` patterns
+// are also visible on an echoed source line, not just in the message body)
+// but are single-router-only waivers, out of scope for this fix — not
+// changed here.
+lint_off -rule UNDRIVEN -file "*/floonoc/hw/floo_router.sv" -match "*not driven: 'past_handshakes_d'*"

@@ -9,6 +9,11 @@
 #                                            controlled FAIL matching <re>)
 #   run_verilator.sh waves                 - FST run with bounded retry (KI-1)
 #   run_verilator.sh waves-vcd             - VCD run (stable fallback, no retry)
+#   run_verilator.sh lint-mesh             - lint-only pass on the mesh DUT
+#   run_verilator.sh build-mesh            - compile the mesh bench
+#   run_verilator.sh run-mesh [+plusargs]  - explicit plusargs: single run;
+#                                            no plusargs: sweep all non-
+#                                            loopback (src,dst) pairs
 #
 # Logs go to logs/, exact command lines preserved in the logs and
 # build/build_cmd*.txt. Nonzero exit on any failure, incl. UVM_ERROR > 0
@@ -294,44 +299,69 @@ case "${1:-}" in
     }
 
     if [ "$#" -gt 0 ]; then
-      # Explicit plusargs given: run exactly that one case, unswept.
-      RUN_LOG=logs/run_mesh.log
+      # Explicit plusargs given: run exactly that one case, unswept. A
+      # separate log file so an ad-hoc debug run never clobbers
+      # logs/run_mesh.log, which the sweep below uses as its combined
+      # evidence log.
+      RUN_LOG=logs/run_mesh_single.log
       run_one_mesh "$RUN_LOG" "$@" || exit 1
       echo "[verilator] mesh run PASS (log: $RUN_LOG, coverage: $MESH_COV_FILE)"
     else
-      # No plusargs: sweep all 12 non-loopback (src_router, dst) pairs in the
-      # 2x2 mesh. A single default-args run only ever exercises src_router=0
+      # No plusargs: sweep all non-loopback (src_router, dst) pairs across
+      # the mesh. A single default-args run only ever exercises src_router=0
       # -> (1,1); a transposed index affecting only one direction's wiring
-      # (e.g. South or West) would still pass that one case cleanly. The 4
+      # (e.g. South or West) would still pass that one case cleanly. The
       # src==dst pairs are the diagonal loopback case, which is genuinely
       # illegal here (the DUT's own NoLoopback assertion aborts) — skipped,
-      # not run. dst_router = dst_y*2 + dst_x, the row-major mapping
+      # not run. dst_router = dst_y*MX + dst_x, the row-major mapping
       # router_idx() uses in tb/pkg/floo_tb_mesh_types_pkg.sv.
+      #
+      # Mesh dimensions are read from config/dut_config_mesh.svh rather than
+      # hardcoded, so the sweep can't silently fall out of sync with the
+      # DUT's actual topology and still print a completeness claim it
+      # doesn't earn. Parsing failure is fatal, not defaulted — a sweep that
+      # silently runs 0 pairs and prints PASS is exactly the bug this
+      # derivation exists to prevent.
+      MESH_CFG="config/dut_config_mesh.svh"
+      MX="$(grep -E "^\`define[[:space:]]+FLOO_VERIF_MESH_X[[:space:]]" "$MESH_CFG" | awk '{print $3}')"
+      MY="$(grep -E "^\`define[[:space:]]+FLOO_VERIF_MESH_Y[[:space:]]" "$MESH_CFG" | awk '{print $3}')"
+      if ! [[ "$MX" =~ ^[0-9]+$ ]] || ! [[ "$MY" =~ ^[0-9]+$ ]]; then
+        echo "[verilator] ERROR: could not parse FLOO_VERIF_MESH_X/_Y as integers from $MESH_CFG" >&2
+        echo "            got MX='$MX' MY='$MY'" >&2
+        exit 1
+      fi
+      NROUTERS=$(( MX * MY ))
       : > logs/run_mesh.log   # combined evidence; each pair also gets its own log
       fail=0
-      for src in 0 1 2 3; do
-        for dy in 0 1; do
-          for dx in 0 1; do
-            dst=$(( dy * 2 + dx ))
+      npairs=0
+      failed_pairs=()
+      for (( src=0; src<NROUTERS; src++ )); do
+        for (( dy=0; dy<MY; dy++ )); do
+          for (( dx=0; dx<MX; dx++ )); do
+            dst=$(( dy * MX + dx ))
             if [ "$src" -eq "$dst" ]; then
               continue   # diagonal: illegal loopback, skipped by design
             fi
+            npairs=$(( npairs + 1 ))
             PAIR_LOG="logs/run_mesh_src${src}_dst${dst}.log"
             echo "[verilator] mesh sweep: src_router=$src -> dst_x=$dx dst_y=$dy (dst_router=$dst)"
             if run_one_mesh "$PAIR_LOG" "+src_router=$src" "+dst_x=$dx" "+dst_y=$dy"; then
               cat "$PAIR_LOG" >> logs/run_mesh.log
             else
               echo "[verilator] mesh run FAILED: pair src_router=$src -> dst_router=$dst (log: $PAIR_LOG)" >&2
+              cat "$PAIR_LOG" >> logs/run_mesh.log
+              failed_pairs+=("src${src}->dst${dst}")
               fail=1
             fi
           done
         done
       done
       if [ $fail -ne 0 ]; then
+        echo "[verilator] mesh run FAILED: ${#failed_pairs[@]}/$npairs pair(s) failed: ${failed_pairs[*]}" >&2
         exit 1
       fi
-      echo "[verilator] mesh run PASS: all 12 non-loopback (src,dst) pairs passed"
-      echo "            (per-pair logs: logs/run_mesh_src*_dst*.log, combined: logs/run_mesh.log, coverage: $MESH_COV_FILE)"
+      echo "[verilator] mesh run PASS: all $npairs non-loopback (src,dst) pairs passed"
+      echo "            (${MX}x${MY} mesh; per-pair logs: logs/run_mesh_src*_dst*.log, combined: logs/run_mesh.log, coverage: $MESH_COV_FILE)"
     fi
     ;;
 

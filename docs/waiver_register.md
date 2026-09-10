@@ -8,7 +8,10 @@ entry here with the observed message, the reason it is benign, and the
 condition under which it must be re-audited. There is no global suppression.
 
 To re-audit any entry: delete it from `config/verilator_waivers.vlt`, run
-`make lint`, and read the resurfaced warning in `logs/lint.log`.
+`make lint`, and read the resurfaced warning in `logs/lint.log`. **Mesh-only
+entries (currently W9) don't resurface under `make lint`** — they need
+`make lint-mesh` / `logs/lint_mesh.log` instead, since the rule they trip
+(`-Wwarn-UNDRIVEN`) is only enabled there.
 
 | ID | Rule | File / scope | Observed message (abridged) | Why benign | Revisit when |
 |----|------|--------------|------------------------------|------------|--------------|
@@ -20,7 +23,7 @@ To re-audit any entry: delete it from `config/verilator_waivers.vlt`, run
 | W6 | all rules | `uvm*/src/*` (UVM 1800.2-2017 library) | Many (the UVM BCL is not Verilator-lint-clean) | Pinned, unmodified third-party verification library; linting it is not a goal of this project. Scoped to the UVM tree only — TB code is NOT covered by this entry. | UVM library version changes, or Accellera publishes a lint-clean release |
 | W7 | `WIDTHTRUNC` | `tb/*` with `-match "*uvm_report_enabled*"` | `uvm_info`/`uvm_error` macros expand to `if (uvm_report_enabled(...))` where the function returns `int` | UVM API signature, expanded into our code by UVM macros; not local logic. Matched on message content so genuine TB width bugs still surface. | UVM macro implementation changes |
 | W8 | `WIDTHTRUNC` | `tb/*` with `-match "*METHODCALL 'randomize'*"` | `randomize()` returns `int` used in boolean context | SystemVerilog-standard `randomize()` signature; call sites check success. Same narrow `-match` scoping as W7. | never expected — standard API |
-| W9 | `UNDRIVEN` | `floonoc/hw/floo_router.sv` (core DUT) with `-match "*past_handshakes_d*"` | `past_handshakes_d` is not driven — only surfaces under `-Wwarn-UNDRIVEN`, enabled for `make lint-mesh` only | Genuinely never assigned anywhere in floo_router.sv at this pin; a pre-existing upstream dead-code leftover (the NBA-target twin of `past_handshakes_q`), not introduced by either bench. Matched on file AND variable name so it cannot mask an UNDRIVEN finding anywhere else in the same file. | FlooNoC pin moves past v0.8.4, or `past_handshakes_d` gains a driver upstream |
+| W9 | `UNDRIVEN` | `floonoc/hw/floo_router.sv` (core DUT) with `-match "*not driven: 'past_handshakes_d'*"` | `past_handshakes_d` is not driven — only surfaces under `-Wwarn-UNDRIVEN`, enabled for `make lint-mesh` only | Parameterization-dependent, not dead code: `past_handshakes_d` IS driven, by an `assign` inside the `gen_multicast` generate branch, but this bench's `EnMultiCast=0` elaborates `gen_unicast` instead, eliding that driver — while the `` `FF `` flop for `past_handshakes_q` sits outside the generate and always exists. Upstream's own `// TODO (lleone): Move the folloiwng FF inside the multicast` comment names the same layout. `-match` is pinned to the warning's message body (not just the bare variable name) since both signals are declared on one line and Verilator's `-match` sees the echoed source line too. | FlooNoC pin moves past v0.8.4, `past_handshakes_d` gains a driver upstream, **or this bench enables `EnMultiCast`** |
 
 Register upkeep rules:
 
