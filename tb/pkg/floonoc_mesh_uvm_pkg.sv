@@ -27,5 +27,6 @@ package floonoc_mesh_uvm_pkg;
   `include "floonoc_mesh_driver.sv"
   `include "floonoc_mesh_monitor.sv"
   `include "floonoc_mesh_agent.sv"
+  `include "floonoc_mesh_scoreboard.sv"
 
 endpackage : floonoc_mesh_uvm_pkg

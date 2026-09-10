@@ -36,6 +36,17 @@ class floonoc_mesh_flit_item extends uvm_sequence_item;
   // (FIX 3/FIX 2). Defaults to 0, which is correct: a freshly-built item is
   // not an output observation until from_flit() says otherwise.
   bit          is_output_obs;
+  // Set by from_flit() when a decoded wire field lands outside the mesh.
+  // from_flit() is the single boundary where untrusted wire data becomes a
+  // TB router index, so it is the only place that can tell a malformed
+  // header from a real one; every consumer downstream has already lost that
+  // information. The coordinate widths are not required to be exact
+  // (FLOO_VERIF_MESH_X_BITS is independent of FLOO_VERIF_MESH_X), so at a
+  // non-power-of-two mesh some wire patterns legitimately decode out of
+  // range. Flagged, never silently used: the scoreboard indexes its
+  // expectation FIFOs with these values.
+  bit          hdr_malformed;
+  string       hdr_malformed_why;
 
   `uvm_object_utils(floonoc_mesh_flit_item)
 
@@ -82,6 +93,8 @@ class floonoc_mesh_flit_item extends uvm_sequence_item;
     out_router    = rhs_.out_router;
     backpressured = rhs_.backpressured;
     is_output_obs = rhs_.is_output_obs;
+    hdr_malformed     = rhs_.hdr_malformed;
+    hdr_malformed_why = rhs_.hdr_malformed_why;
   endfunction
 
   virtual function bit do_compare(uvm_object rhs, uvm_comparer comparer);
@@ -164,6 +177,20 @@ class floonoc_mesh_flit_item extends uvm_sequence_item;
     end else begin
       src_router = router;  // trust the physical port on the input side
     end
+    // Range-check the decode at the boundary, before anyone indexes with it.
+    hdr_malformed     = 1'b0;
+    hdr_malformed_why = "";
+    if (dst_router >= NumRouters) begin
+      hdr_malformed     = 1'b1;
+      hdr_malformed_why = $sformatf(
+          "hdr.dst_id(x=%0d,y=%0d) decodes to router %0d, outside a %0d-router mesh",
+          32'(f.hdr.dst_id.x), 32'(f.hdr.dst_id.y), dst_router, NumRouters);
+    end else if (is_output && src_router >= NumRouters) begin
+      hdr_malformed     = 1'b1;
+      hdr_malformed_why = $sformatf(
+          "hdr.src_id(x=%0d,y=%0d) decodes to router %0d, outside a %0d-router mesh",
+          32'(f.hdr.src_id.x), 32'(f.hdr.src_id.y), src_router, NumRouters);
+    end
   endfunction
 
   virtual function string convert2string();
@@ -172,16 +199,22 @@ class floonoc_mesh_flit_item extends uvm_sequence_item;
     // from_flit() yet, print "out=-" rather than a router index that would
     // read as a real (and misleading, since 0 is a legal router) observation.
     string out_field;
+    string bad_field;
     if (is_output_obs) out_field = $sformatf(" out=R%0d", out_router);
     else                out_field = " out=-";
+    // A malformed decode is worth saying out loud wherever the item is
+    // printed, not only where the scoreboard happens to check the flag.
+    if (hdr_malformed) bad_field = $sformatf(" MALFORMED(%s)", hdr_malformed_why);
+    else               bad_field = "";
     // §11.4.11: padding a conditional's false arm only bites when BOTH arms
     // are bare string literals; casting each arm to `string` sidesteps it
     // (confirmed by hexdump: unfixed, the false arm was 5x 0x20).
-    return $sformatf("src=R%0d(%0d,%0d) dst=R%0d(%0d,%0d) hops=%0d payload=0x%016h%s%s",
+    return $sformatf("src=R%0d(%0d,%0d) dst=R%0d(%0d,%0d) hops=%0d payload=0x%016h%s%s%s",
                      src_router, src_x(), src_y(),
                      dst_router, dst_x(), dst_y(),
                      exp_hops(), payload, out_field,
-                     backpressured ? string'(" [bp]") : string'(""));
+                     backpressured ? string'(" [bp]") : string'(""),
+                     bad_field);
   endfunction
 
 endclass : floonoc_mesh_flit_item
