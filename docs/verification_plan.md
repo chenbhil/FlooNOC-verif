@@ -75,10 +75,21 @@ not a convenience). Endpoints are router indices; only per-router Eject ports
 face the TB, so North/East/South/West are inter-router links inside the mesh
 DUT and are not observable from the interface.
 
-Verified shape: **2x2**. Every bound above `config/dut_config_mesh.svh` is
-derived (`NumRouters`, `MeshDiameter`), and the traffic is generated from the
-topology helpers rather than a literal table, so the code is generic — but
-only 2x2 has been run.
+**Mesh size is a build parameter.** `make build-mesh MESH_X=5 MESH_Y=5`
+(also `MESH_IN_FIFO_DEPTH` / `MESH_OUT_FIFO_DEPTH`) overrides
+`config/dut_config_mesh.svh` through `+define+`. Non-default values tag the
+obj dir, logs and coverage file (`_5x5`), and the default stays the untagged
+2x2 bench. Every bound above the config header is derived (`NumRouters`,
+`MeshDiameter`, `NumLinks`, coordinate widths via `$clog2`), and the traffic
+comes from the topology helpers. Verified shapes: **2x2, 3x3, 4x4 and 5x5**.
+Each passes smoke (`+mesh_num_random=60` above 2x2) and NM1–NM5; numbers are in
+[compatibility.md](compatibility.md).
+
+**Stimulus structure.** There is one sequencer and one driver per router
+(`env.agent.sqr_<r>` / `drv_<r>`) under a virtual sequencer. The smoke virtual
+sequence sends each flit on its source router's sequencer and blocks, so it
+stays serial. The hotspot virtual sequence forks one leaf sequence per source
+in the same timestep.
 
 ### Requirement-to-test matrix (mesh)
 
@@ -86,12 +97,13 @@ only 2x2 has been run.
 |---|---|---|---|---|---|---|
 | RM1 | Routing: every accepted flit is ejected at exactly the router named by its destination header | `floonoc_mesh_smoke_seq` — every physical link both directions, both mesh diagonals, plus 15 random | `write_mesh_out` R1 block, checked before the expectation lookup so a misroute is diagnosed directly rather than as a spurious flit | — | `cp_dst_router`, `x_src_dst` | **passing** |
 | RM2 | Payload arrives unmodified across every hop | same | `write_mesh_out` R2 block (payload compare against the driver-published expectation) | — | `cp_src_router` | **passing** |
-| RM3 | Handshake/backpressure at every Eject port | same (driver holds valid; ~20% random Eject stall) | accepted/delivered counted only on valid&&ready | `A_IN_VALID_STABLE`, `A_OUT_VALID_STABLE`, covers `C_IN/OUT_HANDSHAKE`, `C_IN/OUT_BACKPRESSURE`, per router | `cp_backpressure` | **passing**, with `A_IN_VALID_STABLE` currently vacuous — see below |
+| RM3 | Handshake/backpressure at every Eject port | smoke (driver holds valid; ~20% random Eject stall) + hotspot `+hs_fill` (Eject-input backpressure) | accepted/delivered counted only on valid&&ready | `A_IN_VALID_STABLE`, `A_OUT_VALID_STABLE`, covers `C_IN/OUT_HANDSHAKE`, `C_IN/OUT_BACKPRESSURE`, per router | `cp_backpressure` | **passing**. `A_IN_VALID_STABLE` is vacuous in smoke and **live** in the hotspot fill runs; see below |
 | RM4 | Reset: every router's Eject output quiescent while reset asserted | reset phase of every run | — | `A_OUT_QUIET_IN_RESET` per router | — | **passing** |
 | RM5 | No loss / no duplication end to end across the mesh | same + drain phase + 200ns idle tail | `check_phase`: pending==0, accepted==delivered; `write_mesh_out`: error on empty expectation queue; malformed-header decode reported at the boundary | — | — | **passing** |
 | RM6 | Ordering per (src router, dst router) pair | directed 3-flit same-pair burst (phase C), plus whatever repeats the random phase draws | per-pair FIFO expectation queues, `pop_front` compare | — | — | **passing**, proven live by mutation |
 | RM7 | Hop-count distribution reaches the mesh diameter | directed diagonals guarantee a `MeshDiameter` case | — | — | `cp_hops` | **passing** |
 | RM8 | Path correctness at intermediate routers | same (every link is crossed in both directions by phase A) | `floonoc_mesh_link_monitor` observes every North/East/South/West output handshake through a read-only `floonoc_mesh_link_if`; `write_mesh_hop` requires each hop to leave in the direction `exp_out_port_at(router x, router y, hdr.dst_id)` predicts (`path violation` otherwise). `check_phase` completeness invariant: hops observed == Σ `exp_hops()` over accepted flits. A `valid` toward a boundary port (no neighbor, ready tied 0) is an immediate `LINKMON` error. TB-owned, so it still runs under `-D ASSERTS_OFF` | DUT's own `XYDirectionNotAllowed` / `NoLoopback` remain as a second, non-independent layer | `link_cg` (one bin per existing link) | **passing** (40 hops checked, 40 predicted, 0 violations) |
+| RM10 | Contention at one output and backpressure propagation: several inputs competing for one Eject at once, FIFOs filling, backpressure travelling upstream hop by hop to the sources | `floonoc_mesh_hotspot_test` (`axis`/`ring`, `local`/`fill`) at 2x2..5x5 | all RM1/RM2/RM5/RM6/RM8 checks unchanged, plus the hotspot **simultaneity self-check** (every source's first flit hand-shakes in the same cycle) | `C_IN_BACKPRESSURE` at every source router in `fill` runs | `floonoc_mesh_hotspot_monitor`: per-input stall at T, all-live-inputs-stalled, inputs-requesting-at-eject. Also reports per-router Eject-input backpressure and an arbitration report. Fairness is a **measurement**, not a check (A8-M) | **passing** |
 | RM9 | Illegal destination (src == dst) | — | not re-tested at UVM level: `c_legal_route` makes it unconstructible, and the DUT's own `NoLoopback` assertion covers it | — | — | **out of scope** |
 
 **Stimulus, in full.** `floonoc_mesh_smoke_seq` sends 30 flits at 2x2:
@@ -109,15 +121,35 @@ depth-2 queue at every seed and mesh shape. Verified by mutation: swapping
 `pop_front` for `pop_back` fails the run, and still fails with the random
 phase disabled (4 mismatches on the 15 directed flits alone).
 
-**`A_IN_VALID_STABLE` is currently vacuous, deliberately kept, and
-instrumented.** Its antecedent is input-side backpressure, which this
-configuration cannot produce: the mesh holds 80 flit slots
-(`NumRouters * NumPorts * (InFifoDepth + OutFifoDepth)`), the driver keeps
-one flit outstanding, and the test sends 30. `C_IN_BACKPRESSURE` — the exact
-antecedent of that assertion — reads 0 and is there to make the vacuity
-visible rather than let it hide behind a 100% figure. Mesh assertion coverage
-is therefore 75% (3/4) by design. See
-[compatibility.md](compatibility.md) for the measurements.
+**`A_IN_VALID_STABLE` is vacuous in smoke and live in the hotspot fill
+runs.** Its antecedent is input-side backpressure. The smoke test cannot
+produce any: the 2x2 mesh holds 80 flit slots
+(`NumRouters * NumPorts * (InFifoDepth + OutFifoDepth)`), and smoke stimulus is
+serial with one flit outstanding. `C_IN_BACKPRESSURE`, the exact antecedent,
+reads 0 there, so smoke assertion coverage is 75% (3/4) by design.
+`floonoc_mesh_hotspot_test +hs_fill` sends enough flits per source to fill
+every buffer on its path to a stalled target. Every source router then shows
+Eject-input backpressure (for example at 5x5 ring fill, 3–7 backpressured
+handshakes and 51–108 stalled cycles per source), and assertion coverage for
+that run is **100% (4/4)**. See [compatibility.md](compatibility.md).
+
+**What the hotspot test is.** S routers at Manhattan distance d from a target
+T each send K flits to T, forked in the same timestep on their own
+sequencers, while T's Eject output is held stalled for H cycles and then
+released to 100% ready. `axis` uses T±d on both axes, so each source arrives
+on a different input port of T. `ring` uses every router at distance d, so
+off-axis sources merge onto T's N/S inputs. The four-way case needs at least
+3x3; on 2x2 the test degrades to two sources and says so. K defaults to
+InFifoDepth + OutFifoDepth + 1 (`local`) or
+d·(In + Out) + In + Out + 1 (`fill`). The handoff's In + 1 was measured
+too small, because T's shared Eject output FIFO absorbs two flits; see the plan.
+
+**The simultaneity self-check found a real stimulus bug.** Its negative test
+(NM5, one source delayed a cycle) first ran vacuous. The hotspot fork was
+issued during reset, so every driver's reset wait lined the sources up and
+absorbed the delay; the positive runs' "same cycle" was produced by reset, not
+by the sequence. The sequence now waits for reset plus two edges before
+aligning, and NM5 is caught at every size.
 
 **What RM1 is and is not.** It compares two independent sources — the
 wire-decoded `hdr.dst_id` and the physical Eject port the monitor observed —
@@ -170,6 +202,7 @@ now uses the same arrangement; see N4.
 | NM2 | One accepted flit modeled as ejecting at the wrong router | `corrupt_route_idx` (config_db, `env.sb`) | RM1/RM5/RM6 | `unexpected flit` / `integrity/order mismatch` / `never delivered` | **passing** (caught) |
 | NM3 | Permanent Eject backpressure on every router (`ready_pct = 0`) | config_db, `env.agent.drv` | forward-progress watchdogs (sequence + drain budgets) | `forward progress stopped` | **passing** (caught) |
 | NM4 | The XY model's expected direction for observed link hop #0 perturbed to the next direction (mod 4), in the scoreboard | `corrupt_hop_idx` (config_db, `env.sb`) | RM8 per-hop path check | `path violation` | **passing** (caught: `flit for R2(0,1) at R0(0,0) left North, XY model says East`) |
+| NM5 | One hotspot source's start delayed by one clock edge (stimulus path, not the DUT) | `late_src_idx` (field of `floonoc_mesh_neg_simul_test`) | RM10 simultaneity self-check | `simultaneity violated: source R<n>` | **passing** (caught at 2x2..5x5, e.g. `source R1's first flit hand-shook at t=95000, 1 cycle(s) after the earliest source (t=85000)`) |
 
 Run with `make run-negative-mesh`, which inverts the pass criteria: a
 negative test that reports **no** `UVM_ERROR`, or that misses the expected

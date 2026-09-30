@@ -79,13 +79,93 @@ session as the single-router results above, Verilator 5.052.
 | Coverage — assertion (SVA cover) | **75.0% (3/4)** — `C_IN_HANDSHAKE`, `C_OUT_HANDSHAKE`, `C_OUT_BACKPRESSURE` hit; **`C_IN_BACKPRESSURE` reads 0**, and that is a measured property of the configuration, not a stimulus accident — see the note below | `make cov-mesh` § ASSERTION |
 | Coverage — code (DUT line) | **47.8%** (43/90 points, DUT closure only) | `make cov-mesh` § CODE, `logs/coverage_report_mesh/` |
 | Per-hop XY path check (RM8) | **PASS**: 40 link hops checked, 40 predicted by Σ `exp_hops()`, 0 path violations. Also verified with `+define+ASSERTS_OFF` (DUT's `XYDirectionNotAllowed` compiled out: 0 refs in generated C++): still 40 hops checked, and NM4 still caught | `logs/run_mesh.log` (`hops checked=` line) |
-| Negative self-tests (NM1–NM4) | **PASS**: payload corruption, wrong-router expectation, held backpressure and a perturbed XY-model hop direction (NM4, `path violation`) each produced the required controlled failure with the expected diagnostic | `make run-negative-mesh`, `logs/run_floonoc_mesh_neg_*.log` |
+| Negative self-tests (NM1–NM5) | **PASS**: payload corruption, wrong-router expectation, held backpressure a perturbed XY-model hop direction (NM4, `path violation`), and a hotspot source started one cycle late (NM5, `simultaneity violated: source R1 ...`) each produced the required controlled failure with the expected diagnostic | `make run-negative-mesh`, `logs/run_floonoc_mesh_neg_*.log` |
 | Single-router bench unaffected by the mesh work | **PASS**: the mesh bench adds no dependency on single-router sources. (The single-router bench was since changed deliberately by the G1 checker fix: driver-fed expectations and N4. It still passes 25/25 with functional coverage unchanged at 62.2%) | `make lint && make build && make run && make run-negative` |
+
+### Mesh size as a build parameter (smoke, Verilator 5.052, 2026-09-30)
+
+`make build-mesh MESH_X=<n> MESH_Y=<n>`, `make run-mesh ... PLUSARGS=+mesh_num_random=60`.
+Every size also passes NM1–NM5 (`make run-negative-mesh MESH_X=<n> MESH_Y=<n>`).
+
+| Size | Flits (A + B + C + random) | Result | Link hops (= Σ exp_hops) | link_cg | Functional (all covergroups) | Assertion | DUT line |
+|---|---|---|---|---|---|---|---|
+| 2x2 | 8 + 4 + 3 + 15 = 30 | 30/30/30 | 40 | 8/8 | 88.9% | 75% (3/4) | 47.8% |
+| 3x3 | 24 + 4 + 3 + 60 = 91 | 91/91/91 | 161 | 24/24 | 69.0% (89/129) | 75% (3/4) | 48.9% |
+| 4x4 | 48 + 4 + 3 + 60 = 115 | 115/115/115 | 248 | 48/48 | 52.9% (182/344) | 75% (3/4) | 48.9% |
+| 5x5 | 80 + 4 + 3 + 60 = 147 | 147/147/147 | 324 | 80/80 | 35.0% (268/765) | 75% (3/4) | 48.9% |
+
+Functional coverage falls with size because the `x_src_dst` cross grows as
+N²: 625 bins at 5x5 against 147 flits. It is a stimulus-volume number, not a
+gap in any directed case, since every link is hit at every size. Run time is at
+most 2 s at every size. The 2026-09-29 reference for a lone 2x2 build is about
+50 s. The builds measured here ran 3 or 4 sizes in parallel on one machine and
+took 164–435 s each, so those figures are contention-inflated rather than
+per-size costs.
+
+**Latency** (accept-to-deliver, driver input handshake to monitor output
+handshake, printed by the scoreboard for every run). The smoke runs give about
+2 cycles per router plus 2:
+
+| hops | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 |
+|---|---|---|---|---|---|---|---|---|
+| avg cycles (5x5 smoke) | 4.2 | 6.4 | 8.6 | 10.3 | 12.0 | 16.0 | 16.2 | 18.6 |
+| 2x2 smoke | 4.3 | 6.1 | | | | | | |
+
+This matches the 2026-09-29 reference (1 hop 4.1, 2 hops 6.2, measured from
+monitor in/out lines).
+
+### Hotspot test (`floonoc_mesh_hotspot_test`, Verilator 5.052, 2026-09-30)
+
+`make run-mesh MESH_X=5 MESH_Y=5 TEST=floonoc_mesh_hotspot_test PLUSARGS="+hs_mode=ring +hs_fill"`.
+T is the centre, the Eject output is held for H cycles and then released to 100%.
+Every run PASSED (0 errors, 0 mismatches), and in every run all sources' first
+flits hand-shook in the same cycle (t=85 ns).
+
+| Size / mode | d | S | K | H | Flits | T inputs stalled together (cycles) | Per-input stall cov | Sources with Eject-input backpressure | Latency avg (min–max) |
+|---|---|---|---|---|---|---|---|---|---|
+| 2x2 axis local | 1 | 2 | 5 | 34 | 10 | 31 (both live inputs) | 50%, structural (2 live inputs) | none | 37.5 (35–40) |
+| 2x2 axis fill | 1 | 2 | 9 | 42 | 18 | 39 | 50%, structural | **2/2** | 38.3 (9–50) |
+| 3x3 axis local | 1 | 4 | 5 | 34 | 20 | 31 | 100% | none | 42.5 (35–50) |
+| 3x3 axis fill | 1 | 4 | 9 | 42 | 36 | 39 | 100% | **4/4** (45–48 cyc, 2–3 hs) | 44.2 (22–61) |
+| 4x4 axis local | 1 | 4 | 5 | 34 | 20 | 31 | 100% | none | 42.5 (35–50) |
+| 4x4 axis fill | 1 | 4 | 9 | 42 | 36 | 39 | 100% | **4/4** | 44.2 (22–61) |
+| 5x5 axis local | 2 | 4 | 5 | 38 | 20 | 33 | 100% | none | 46.5 (39–54) |
+| 5x5 axis fill | 2 | 4 | 13 | 54 | 52 | 49 | 100% | **4/4** (55–58 cyc, 2–3 hs) | 64.0 (36–85) |
+| 5x5 ring local | 2 | 8 | 5 | 38 | 40 | 33 | 100% | none | 56.5 (39–74) |
+| 5x5 ring fill | 2 | 8 | 13 | 54 | 104 | 49 | 100% | **8/8** (51–108 cyc, 3–7 hs) | 71.5 (36–115) |
+
+"All live inputs stalled" and "requesting-at-eject" are hit in every run. At
+2x2 the per-input and requesting bins for the two missing directions are
+structurally unreachable. In `local` mode no source is ever backpressured, as
+expected: K fills only T's own buffers. **5x5 ring fill: assertion coverage
+100% (4/4)**, meaning `C_IN_BACKPRESSURE` is non-zero and `A_IN_VALID_STABLE`
+is no longer vacuous.
+
+**Arbitration (a measurement; fairness is not assumed, A8-M).**
+- *axis:* a strict rotation N→E→S→W at T's Eject after release (5x5:
+  `22 14 2 10 22 14 2 10 ...`), exactly one flit per source per window of 4. No
+  source waits behind more than 3 others.
+- *2x2:* the first two ejections after release come from the same source (the
+  Eject output FIFO had already taken two flits during the hold), then it
+  alternates.
+- *ring:* round-robin is fair **per input port, not per flow**. The single
+  sources on E and W (R14, R10) get one slot in four and wait behind at most 3
+  others. The three sources merged onto each of N and S share that port's
+  slot: each waits behind up to 8 others, and they finish last, alternating
+  N/S once E and W have drained.
+
+**K deviation, measured.** With the handoff's local K = InFifoDepth + 1 = 3 at
+5x5, only S and W ever stalled, "all inputs stalled" was 0 cycles, and
+per-input stall coverage was 75%. T's shared Eject output FIFO absorbs two
+flits during the hold. K = In + Out + 1 = 5 gives four-way stall in every run.
 
 ### Why mesh assertion coverage is 75% and should stay that way
 
+(This section is about the **smoke** test. The hotspot `+hs_fill` runs make
+the assertion live and read 100%; see above.)
+
 `A_IN_VALID_STABLE` (the TB must hold `valid_in` stable until the DUT takes
-the flit) is **vacuous in this configuration**. Its antecedent is input-side
+the flit) is **vacuous in the smoke configuration**. Its antecedent is input-side
 backpressure, and the mesh cannot produce any at this traffic level:
 
 - The mesh holds `NumRouters * NumPorts * (InFifoDepth + OutFifoDepth)` =

@@ -142,6 +142,22 @@ which cannot happen if the field is rewritten in flight.
 
 **Invalidated if:** `SourceRouting` or collective operations are enabled.
 
+### A8-M — Cross-source order and fairness are NOT assumed
+
+Nothing in the bench assumes the order in which flits from DIFFERENT sources
+leave a shared output, or any fairness bound. Only per-(src, dst) order is
+checked (A4-M). The hotspot test's arbitration report (the order at T's Eject
+after release, per-source deliveries per window, and the maximum number of
+other-source flits that left T while a given source had one inside T) is a
+**measurement**, printed in `report_phase`, never a pass/fail criterion. The
+upstream spec does not promise fairness. What it shows (see compatibility.md)
+is round-robin fair **per input port**, not per flow. Sources merged onto one
+input share that port's slot, which is expected and not a bug.
+
+**Invalidated if:** a fairness or starvation bound is added as a check. That
+would be a design-intent check needing its own spec basis and its own negative
+test.
+
 ### A7-M — Inter-router links are observed by hierarchical reference
 
 The per-hop path check (RM8) needs the North/East/South/West handshakes,

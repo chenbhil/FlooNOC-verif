@@ -130,6 +130,37 @@ therefore have no bin at all, and nothing is hardcoded to 2x2. This is the
 workaround for Verilator 5.052 not parsing `with` on bins. The directed phase
 crosses every link in both directions, so the smoke run reads 100%.
 
+### Hotspot contention coverage (only in `floonoc_mesh_hotspot_test`)
+
+`floonoc_mesh_hotspot_monitor` (created only when a test sets
+`hotspot_target`, so the smoke numbers above are unchanged) holds three
+covergroups over the target router T:
+- `cg_stall`: each of T's N/E/S/W inputs seen stalled (valid && !ready);
+- `cg_all_stalled`: every live input stalled in one cycle;
+- `cg_requesting`: 1–4 of T's inputs presenting a flit for T when T's Eject
+  handshakes.
+
+The bins are over T's four directions. That is fixed by the 5-port router,
+not by mesh size: Verilator 5.052 rejects covergroup constructor arguments in
+bin ranges ("Non-constant expression in array bins range"). So a T with fewer
+than four neighbors (2x2) has structurally unreachable bins, like the
+`x_src_dst` diagonal. All three read 100% at every size from 3x3 up; at 2x2
+`cg_stall` and `cg_requesting` read 50%, with 2 live inputs.
+
+### Stimulus architecture (mesh)
+
+| Construct | Where | Role |
+|---|---|---|
+| per-router `uvm_sequencer` / `uvm_driver` arrays | `floonoc_mesh_agent` (`sqr_<r>`, `drv_<r>`) | simultaneous injection; driver r owns only router r's pins |
+| `uvm_config_db#(int unsigned)` per instance | agent → `drv_<r>` `router_idx` | per-instance configuration of identical components |
+| config_db glob (`env.agent.drv_*`) | NM3 `ready_pct` | one knob reaching every per-router driver |
+| virtual sequencer + `` `uvm_declare_p_sequencer `` | `floonoc_mesh_vsequencer`, smoke + hotspot sequences | sequences reach every per-router sequencer |
+| nested sequences, `start(sqr, parent)` | `floonoc_mesh_send_seq` leaf | per-source item lists |
+| `fork ... join_none` + `wait fork` in a sequence | `floonoc_mesh_hotspot_seq` | same-timestep start of every source |
+| shared control `uvm_object` via config_db | `floonoc_mesh_ready_ctrl` | deterministic Eject hold/release, no timing guesses |
+| several analysis ports into one imp | every `drv_<r>.sent_ap` → `sb.in_imp` | expectations from all drivers |
+| third/fourth `uvm_analysis_imp_decl` | `_mesh_hop` (scoreboard), `_mesh_hs_in` (hotspot monitor) | unique suffixes, per the rule |
+
 New mesh components for the per-hop path check (RM8):
 `floonoc_mesh_link_if` (read-only interface), `floonoc_mesh_link_monitor`
 (passive `uvm_monitor`), `floonoc_mesh_hop_item` (`uvm_sequence_item` with a

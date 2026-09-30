@@ -83,8 +83,29 @@ make sources
 make lint-mesh          # UVM-free elaboration of the mesh RTL
 make build-mesh         # compile tb_top_mesh + floonoc_mesh_uvm_pkg
 make run-mesh           # positive smoke test (expects TEST PASSED)
-make run-negative-mesh  # 4 fault injections, each must be caught
+make run-negative-mesh  # 5 fault injections, each must be caught
 make cov-mesh           # functional / assertion / code coverage split
+```
+
+Mesh size and FIFO depth are build parameters. Pass the same variables to
+every mesh target; non-default values tag the obj dir, logs and coverage file
+(`build/obj_dir_mesh_5x5`, `logs/coverage_mesh_5x5.dat`):
+
+```sh
+make build-mesh MESH_X=5 MESH_Y=5          # also MESH_IN_FIFO_DEPTH / MESH_OUT_FIFO_DEPTH
+make run-mesh   MESH_X=5 MESH_Y=5 PLUSARGS=+mesh_num_random=60
+make run-negative-mesh MESH_X=5 MESH_Y=5
+```
+
+Hotspot test: S routers at distance d from a target T each send K flits to T
+in the same cycle while T's Eject is stalled, then released. It reports
+contention coverage, per-router backpressure, the arbitration order and
+latency:
+
+```sh
+make run-mesh MESH_X=5 MESH_Y=5 TEST=floonoc_mesh_hotspot_test \
+     PLUSARGS="+hs_mode=ring +hs_fill"   # also +hs_target= +hs_d= +hs_k= +hs_hold= +hs_hold_cycles=
+make cov-mesh MESH_X=5 MESH_Y=5 TEST=floonoc_mesh_hotspot_test
 ```
 
 Expected `make run-mesh` tail:
