@@ -115,7 +115,8 @@ run-negative-mesh:
 	./scripts/run_verilator.sh run-neg-mesh floonoc_mesh_neg_payload_test 'integrity/order mismatch'
 	./scripts/run_verilator.sh run-neg-mesh floonoc_mesh_neg_route_test   'unexpected flit|integrity/order mismatch|never delivered'
 	./scripts/run_verilator.sh run-neg-mesh floonoc_mesh_neg_stall_test   'forward progress stopped'
-	@echo "[run-negative-mesh] all 3 fault injections were caught — mesh checkers are effective"
+	./scripts/run_verilator.sh run-neg-mesh floonoc_mesh_neg_path_test    'path violation'
+	@echo "[run-negative-mesh] all 4 fault injections were caught — mesh checkers are effective"
 
 waves:
 	./scripts/run_verilator.sh waves

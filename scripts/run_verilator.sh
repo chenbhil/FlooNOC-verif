@@ -59,6 +59,7 @@ TB_SOURCES=(
 TB_MESH_SOURCES=(
   tb/pkg/floo_tb_mesh_types_pkg.sv
   tb/interfaces/floonoc_mesh_if.sv
+  tb/interfaces/floonoc_mesh_link_if.sv
   tb/top/floonoc_mesh_dut.sv
   tb/assertions/floonoc_mesh_router_sva.sv
   tb/pkg/floonoc_mesh_uvm_pkg.sv
@@ -312,6 +313,7 @@ case "${1:-}" in
         "$UVM_HOME/src/uvm_pkg.sv" \
         tb/pkg/floo_tb_mesh_types_pkg.sv \
         tb/interfaces/floonoc_mesh_if.sv \
+        tb/interfaces/floonoc_mesh_link_if.sv \
         tb/pkg/floonoc_mesh_uvm_pkg.sv \
         tb/top/floonoc_mesh_dut.sv \
         tb/top/lint_wrapper_mesh.sv \

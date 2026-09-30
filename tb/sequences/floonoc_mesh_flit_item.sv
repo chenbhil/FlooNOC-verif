@@ -144,9 +144,12 @@ class floonoc_mesh_flit_item extends uvm_sequence_item;
     return dst_router;
   endfunction
 
-  // Hop count, from the package's multi-hop routing model. Coverage signal
-  // only: floonoc_mesh_if exposes Eject endpoints, not the path taken, so
-  // the scoreboard cannot and does not check intermediate routers.
+  // Hop count, from the package's multi-hop routing model: the number of
+  // router-to-router links the flit must cross (path size - 1). Used by
+  // coverage, and by the scoreboard's RM8 completeness invariant (sum over
+  // accepted flits == hops observed by floonoc_mesh_link_monitor). The
+  // intermediate hops themselves are checked one by one against
+  // exp_out_port_at() in floonoc_mesh_scoreboard::write_mesh_hop.
   function int unsigned exp_hops();
     int unsigned path[$];
     exp_path(router_x(src_router), router_y(src_router), dst_id(), path);

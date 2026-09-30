@@ -7,17 +7,26 @@
 //                    it on — so it catches a real DUT misroute. It is not a
 //                    check of the XY routing MODEL: per D6 the eject router
 //                    is the destination by definition, so exp_out_router()
-//                    makes no prediction. The model (exp_out_port_at /
-//                    exp_path) reaches the scoreboard only via exp_hops(),
-//                    which is coverage and printing. The interface exposes
-//                    Eject endpoints only, so the hops in between are the
-//                    DUT's own XYDirectionNotAllowed / NoLoopback assertions'
-//                    job, not this scoreboard's.
+//                    makes no prediction. The XY routing MODEL is checked
+//                    separately, hop by hop, by RM8 below.
 //  R2 payload      — payload and destination header arrive unmodified
 //  R5 no loss/dup  — every accepted flit is delivered exactly once; any
 //                    output flit without a pending expectation is an error
 //  R6 ordering     — flits of the same (src router -> dst router) pair are
 //                    delivered in acceptance order (per-pair FIFO)
+//  RM8 XY path     — every router-to-router hop (valid && ready on a
+//                    North/East/South/West output, observed by
+//                    floonoc_mesh_link_monitor) leaves in the direction
+//                    exp_out_port_at(router x, router y, hdr.dst_id) predicts.
+//                    Stateless: no flit identity is needed. If every hop
+//                    decision matches the model, the path equals exp_path()
+//                    by induction; the final Eject decision is R1. Plus a
+//                    completeness invariant at check_phase: total observed
+//                    hops == sum of exp_hops() over accepted flits, which
+//                    catches a hop the link monitor missed. TB-owned and
+//                    independent of the DUT's own XYDirectionNotAllowed /
+//                    NoLoopback assertions, so it still runs under
+//                    -D ASSERTS_OFF (the xezim configuration).
 //
 // R6 on a mesh: two flits sharing (src, dst) take the SAME route, because
 // dimension-order XY routing is deterministic and stateless. They therefore
@@ -34,10 +43,9 @@
 // expectation, faithfully routed there, and scored as a match. See the
 // plan's amendment A8.
 //
-// Path correctness is deliberately NOT checked: floonoc_mesh_if exposes only
-// Eject endpoints, not the hops in between. Intermediate-router behavior is
-// the RTL wiring layer's job (Phase 1) and the DUT's own per-router
-// XYDirectionNotAllowed / NoLoopback assertions.
+// Path correctness is checked via a SEPARATE read-only link interface
+// (floonoc_mesh_link_if), not floonoc_mesh_if, which exposes only Eject
+// endpoints. See RM8 above.
 // -----------------------------------------------------------------------------
 
 // Distinct suffixes from the single-router bench's _in/_out: these macros
@@ -45,6 +53,7 @@
 // keep the two packages independent even if they ever met in one compile.
 `uvm_analysis_imp_decl(_mesh_in)
 `uvm_analysis_imp_decl(_mesh_out)
+`uvm_analysis_imp_decl(_mesh_hop)
 
 class floonoc_mesh_scoreboard extends uvm_scoreboard;
 
@@ -52,6 +61,7 @@ class floonoc_mesh_scoreboard extends uvm_scoreboard;
 
   uvm_analysis_imp_mesh_in  #(floonoc_mesh_flit_item, floonoc_mesh_scoreboard) in_imp;
   uvm_analysis_imp_mesh_out #(floonoc_mesh_flit_item, floonoc_mesh_scoreboard) out_imp;
+  uvm_analysis_imp_mesh_hop #(floonoc_mesh_hop_item,  floonoc_mesh_scoreboard) hop_imp;
 
   // Per (source router, destination router) FIFO of expected flits
   protected floonoc_mesh_flit_item expected [NumRouters][NumRouters][$];
@@ -60,23 +70,31 @@ class floonoc_mesh_scoreboard extends uvm_scoreboard;
   int unsigned n_delivered;
   int unsigned n_matched;
   int unsigned n_mismatched;
+  int unsigned n_hops;             // RM8: link hops observed
+  int unsigned n_path_violations;  // RM8: hops that disagreed with the XY model
+  int unsigned exp_hop_sum;        // RM8: sum of exp_hops() over accepted flits
 
   // Fault-injection knobs for negative self-tests ONLY (prove the checkers
   // are not vacuous — see docs/verification_plan.md N1/N2). Default -1: off.
   // Indices are 0-based over ACCEPTED flits (compared before n_accepted++).
   int corrupt_payload_idx = -1;  // corrupt this accepted flit's expected payload
   int corrupt_route_idx   = -1;  // model this accepted flit at the wrong router
+  // NM4: perturb the XY model's expected direction for this OBSERVED hop
+  // (0-based over hops, compared before n_hops++). The DUT is untouched.
+  int corrupt_hop_idx     = -1;
 
   function new(string name, uvm_component parent);
     super.new(name, parent);
     in_imp  = new("in_imp", this);
     out_imp = new("out_imp", this);
+    hop_imp = new("hop_imp", this);
   endfunction
 
   virtual function void build_phase(uvm_phase phase);
     super.build_phase(phase);
     void'(uvm_config_db#(int)::get(this, "", "corrupt_payload_idx", corrupt_payload_idx));
     void'(uvm_config_db#(int)::get(this, "", "corrupt_route_idx", corrupt_route_idx));
+    void'(uvm_config_db#(int)::get(this, "", "corrupt_hop_idx", corrupt_hop_idx));
   endfunction
 
   // N2 helper: pick a router that is neither the true destination nor the
@@ -132,7 +150,33 @@ class floonoc_mesh_scoreboard extends uvm_scoreboard;
                                     eo, n_accepted), UVM_LOW)
     end
     n_accepted++;
+    // RM8 completeness: every router-to-router link this flit must cross.
+    // Taken from the TRUE item, before any N2 corruption of `eo` — the flit
+    // on the wire still follows its real path.
+    exp_hop_sum += t.exp_hops();
     expected[t.src_router][eo].push_back(t);
+  endfunction
+
+  // RM8: one router-to-router hop observed on a link -> compare the direction
+  // it left on with the XY model's one-hop decision at that router.
+  virtual function void write_mesh_hop(floonoc_mesh_hop_item h);
+    floo_pkg::route_direction_e exp_dir;
+    exp_dir = exp_out_port_at(router_x(h.router), router_y(h.router), h.dst_id);
+    if (int'(n_hops) == corrupt_hop_idx) begin
+      exp_dir = floo_pkg::route_direction_e'((32'(exp_dir) + 1) % 4);
+      `uvm_info("SB_NEG", $sformatf("injected wrong XY-model direction (%s) on observed hop #%0d",
+                                    dir_name(32'(exp_dir)), n_hops), UVM_LOW)
+    end
+    n_hops++;
+    if (h.dir != exp_dir) begin
+      n_mismatched++;
+      n_path_violations++;
+      `uvm_error("SB", $sformatf(
+        "path violation: flit for R%0d(%0d,%0d) at R%0d(%0d,%0d) left %s, XY model says %s: %s",
+        router_idx(32'(h.dst_id.x), 32'(h.dst_id.y)), 32'(h.dst_id.x), 32'(h.dst_id.y),
+        h.router, router_x(h.router), router_y(h.router),
+        dir_name(32'(h.dir)), dir_name(32'(exp_dir)), h.convert2string()))
+    end
   endfunction
 
   // Output handshake delivered by the DUT -> match oldest expectation
@@ -231,6 +275,17 @@ class floonoc_mesh_scoreboard extends uvm_scoreboard;
     if (n_delivered != n_accepted) begin
       `uvm_error("SB", $sformatf("accepted %0d != delivered %0d", n_accepted, n_delivered))
     end
+    // RM8 completeness. Only meaningful once the mesh has drained: a flit
+    // still stuck in flight (NM3, or a real stall already reported above)
+    // has legitimately not crossed all its links yet, and flagging that too
+    // would be a second report of the same fault.
+    if (pending_count() == 0 && n_delivered == n_accepted) begin
+      if (n_hops != exp_hop_sum) begin
+        `uvm_error("SB", $sformatf(
+          "link hop count mismatch: observed %0d router-to-router hops, XY model predicts %0d for the %0d accepted flits",
+          n_hops, exp_hop_sum, n_accepted))
+      end
+    end
   endfunction
 
   virtual function void report_phase(uvm_phase phase);
@@ -238,6 +293,9 @@ class floonoc_mesh_scoreboard extends uvm_scoreboard;
     `uvm_info("SB", $sformatf(
       "accepted=%0d delivered=%0d matched=%0d mismatched=%0d pending=%0d",
       n_accepted, n_delivered, n_matched, n_mismatched, pending_count()), UVM_LOW)
+    `uvm_info("SB", $sformatf(
+      "hops checked=%0d (XY model predicts %0d) path_violations=%0d",
+      n_hops, exp_hop_sum, n_path_violations), UVM_LOW)
   endfunction
 
 endclass : floonoc_mesh_scoreboard

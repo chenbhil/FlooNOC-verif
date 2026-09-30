@@ -85,6 +85,22 @@ module tb_top_mesh;
   assign rif.data_out  = mesh_data_out;
 
   // ---------------------------------------------------------------------------
+  // Inter-router link observation (read-only, for the per-hop path check)
+  //
+  // Hierarchical references into our own wrapper's internal per-router
+  // arrays; nothing is driven back into i_mesh. See floonoc_mesh_link_if.
+  // ---------------------------------------------------------------------------
+  floonoc_mesh_link_if lif (.clk(clk), .rst_n(rst_n));
+
+  for (genvar r = 0; r < NumRouters; r++) begin : gen_link_obs
+    for (genvar d = 0; d < 4; d++) begin : gen_dir
+      assign lif.valid[r][d] = i_mesh.dut_valid_out[r][d][0];
+      assign lif.ready[r][d] = i_mesh.dut_ready_out[r][d][0];
+      assign lif.data[r][d]  = i_mesh.dut_data_out[r][d][0];
+    end
+  end
+
+  // ---------------------------------------------------------------------------
   // Protocol assertions (per-router Eject ports)
   //
   // One instance covers the whole mesh: floonoc_mesh_router_sva generates the
@@ -113,6 +129,7 @@ module tb_top_mesh;
   // ---------------------------------------------------------------------------
   initial begin
     uvm_config_db#(virtual floonoc_mesh_if)::set(null, "*", "vif", rif);
+    uvm_config_db#(virtual floonoc_mesh_link_if)::set(null, "*", "link_vif", lif);
     run_test();
   end
 

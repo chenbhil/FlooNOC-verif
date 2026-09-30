@@ -130,6 +130,36 @@ package floo_tb_mesh_types_pkg;
     endcase
   endfunction
 
+  // Directed router-to-router links: every (router, N/E/S/W direction) pair
+  // that has a neighbor. Counted rather than hardcoded so link coverage and
+  // the link monitor stay generic over mesh shape (8 on a 2x2 mesh:
+  // 2*(MeshX-1)*MeshY + 2*MeshX*(MeshY-1)).
+  function automatic int unsigned num_links();
+    int unsigned n = 0;
+    for (int unsigned r = 0; r < NumRouters; r++) begin
+      for (int unsigned d = 0; d < 4; d++) begin
+        if (has_neighbor(r, route_direction_e'(d))) n++;
+      end
+    end
+    return n;
+  endfunction
+
+  localparam int unsigned NumLinks = num_links();
+
+  // Dense index in [0, NumLinks) of the link leaving router r toward `dir`,
+  // in (router, direction) row-major order. Caller must check
+  // has_neighbor(r, dir) first — a boundary port has no link index.
+  function automatic int unsigned link_index(int unsigned r, route_direction_e dir);
+    int unsigned n = 0;
+    for (int unsigned rr = 0; rr < NumRouters; rr++) begin
+      for (int unsigned d = 0; d < 4; d++) begin
+        if (rr == r && d == 32'(dir)) return n;
+        if (has_neighbor(rr, route_direction_e'(d))) n++;
+      end
+    end
+    return n;
+  endfunction
+
   // Reference model of the DUT's dimension-order (X-then-Y) XY routing rule,
   // ONE HOP at a time — mirrors floo_tb_types_pkg.exp_out_port, generalized
   // off a per-call current position instead of a single fixed RouterX/RouterY.

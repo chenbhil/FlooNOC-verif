@@ -23,12 +23,15 @@ package floonoc_mesh_uvm_pkg;
   import floo_tb_mesh_types_pkg::*;
 
   `include "floonoc_mesh_flit_item.sv"
+  `include "floonoc_mesh_hop_item.sv"
   `include "floonoc_mesh_smoke_seq.sv"
   `include "floonoc_mesh_driver.sv"
   `include "floonoc_mesh_monitor.sv"
+  `include "floonoc_mesh_link_monitor.sv"
   `include "floonoc_mesh_agent.sv"
   `include "floonoc_mesh_scoreboard.sv"
   `include "floonoc_mesh_cov.sv"
+  `include "floonoc_mesh_link_cov.sv"
   `include "floonoc_mesh_env.sv"
   `include "floonoc_mesh_smoke_test.sv"
   `include "floonoc_mesh_negative_tests.sv"

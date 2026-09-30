@@ -4,7 +4,7 @@
 // *** TEST FAILED *** with a specific diagnostic. They prove the mesh
 // scoreboard and watchdogs are not vacuous. Executed by
 // `make run-negative-mesh`, which inverts the pass criteria.
-// See docs/verification_plan.md rows NM1-NM3.
+// See docs/verification_plan.md rows NM1-NM4.
 //
 // Injection indices count ACCEPTED flits (floonoc_mesh_scoreboard::n_accepted),
 // and floonoc_mesh_smoke_seq sends 12 directed + 15 random = 27 of them on a
@@ -74,3 +74,24 @@ class floonoc_mesh_neg_stall_test extends floonoc_mesh_smoke_test;
   endfunction
 
 endclass : floonoc_mesh_neg_stall_test
+
+
+// NM4: perturb the scoreboard's XY-model direction for one OBSERVED link hop
+// -> the RM8 per-hop path check must fire. The fault is in the model side of
+// the comparison, never the DUT; it stands in for a DUT that sends a flit
+// the wrong way. Hop #0 is the first link handshake of the directed phase,
+// so the injection point is seed-independent.
+class floonoc_mesh_neg_path_test extends floonoc_mesh_smoke_test;
+
+  `uvm_component_utils(floonoc_mesh_neg_path_test)
+
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+  endfunction
+
+  virtual function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
+    uvm_config_db#(int)::set(this, "env.sb", "corrupt_hop_idx", 0);
+  endfunction
+
+endclass : floonoc_mesh_neg_path_test
