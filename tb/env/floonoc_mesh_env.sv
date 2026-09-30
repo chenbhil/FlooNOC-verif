@@ -35,6 +35,7 @@ class floonoc_mesh_env extends uvm_env;
   floonoc_mesh_link_cov     link_cov;
   floonoc_mesh_vsequencer   vsqr;
   floonoc_mesh_ready_ctrl   ready_ctrl;
+  floonoc_mesh_hotspot_monitor hs_mon;   // only when "hotspot_target" is set
 
   function new(string name, uvm_component parent);
     super.new(name, parent);
@@ -46,6 +47,14 @@ class floonoc_mesh_env extends uvm_env;
     uvm_config_db#(floonoc_mesh_ready_ctrl)::set(this, "agent.drv_*", "ready_ctrl", ready_ctrl);
     agent = floonoc_mesh_agent::type_id::create("agent", this);
     vsqr  = floonoc_mesh_vsequencer::type_id::create("vsqr", this);
+    begin
+      int t;
+      if (uvm_config_db#(int)::get(this, "", "hotspot_target", t)) begin
+        uvm_config_db#(int)::set(this, "hs_mon", "hotspot_target", t);
+        uvm_config_db#(floonoc_mesh_ready_ctrl)::set(this, "hs_mon", "ready_ctrl", ready_ctrl);
+        hs_mon = floonoc_mesh_hotspot_monitor::type_id::create("hs_mon", this);
+      end
+    end
     sb    = floonoc_mesh_scoreboard::type_id::create("sb", this);
     cov   = floonoc_mesh_cov::type_id::create("cov", this);
     link_mon = floonoc_mesh_link_monitor::type_id::create("link_mon", this);
@@ -59,6 +68,7 @@ class floonoc_mesh_env extends uvm_env;
       vsqr.sqr[r] = agent.sqr[r];
     end
     vsqr.ready_ctrl = ready_ctrl;
+    if (hs_mon != null) agent.mon.in_ap.connect(hs_mon.in_imp);
     vsqr.vif        = agent.mon.vif;
     agent.mon.out_ap.connect(sb.out_imp);
     agent.mon.out_ap.connect(cov.analysis_export);

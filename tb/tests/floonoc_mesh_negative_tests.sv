@@ -4,7 +4,7 @@
 // *** TEST FAILED *** with a specific diagnostic. They prove the mesh
 // scoreboard and watchdogs are not vacuous. Executed by
 // `make run-negative-mesh`, which inverts the pass criteria.
-// See docs/verification_plan.md rows NM1-NM4.
+// See docs/verification_plan.md rows NM1-NM5.
 //
 // Injection indices count ACCEPTED flits (floonoc_mesh_scoreboard::n_accepted).
 // RULE: NM1/NM2's indices (3 and 5) must land inside directed phase A (one
@@ -96,3 +96,23 @@ class floonoc_mesh_neg_path_test extends floonoc_mesh_smoke_test;
   endfunction
 
 endclass : floonoc_mesh_neg_path_test
+
+
+// NM5: delay one hotspot source's start by one clock edge -> the hotspot
+// sequence's simultaneity self-check must fire and name the late source.
+// Runs at any mesh size (at 2x2 the hotspot degrades to two sources, which
+// is still enough to be late relative to).
+class floonoc_mesh_neg_simul_test extends floonoc_mesh_hotspot_test;
+
+  `uvm_component_utils(floonoc_mesh_neg_simul_test)
+
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+  endfunction
+
+  virtual function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
+    late_src_idx = 0;
+  endfunction
+
+endclass : floonoc_mesh_neg_simul_test

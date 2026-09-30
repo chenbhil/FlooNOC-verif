@@ -88,6 +88,7 @@ class floonoc_mesh_monitor extends uvm_monitor;
         if (vif.valid_out[r] === 1'b1 && vif.ready_out[r] === 1'b1) begin
           item = floonoc_mesh_flit_item::type_id::create($sformatf("mon_out_r%0d", r));
           item.from_flit(vif.data_out[r], r, /*is_output*/ 1'b1, out_bp[r]);
+          item.obs_time = $realtime;  // output handshake edge, for latency
           out_bp[r] = 1'b0;
           `uvm_info("MON", {"out: ", item.convert2string()}, UVM_HIGH)
           out_ap.write(item);

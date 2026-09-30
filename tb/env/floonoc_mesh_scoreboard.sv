@@ -55,6 +55,23 @@
 `uvm_analysis_imp_decl(_mesh_out)
 `uvm_analysis_imp_decl(_mesh_hop)
 
+// Accept-to-deliver latency accumulator (cycles), one per group.
+class floonoc_mesh_lat_stat;
+  int unsigned n;
+  int unsigned min_c = 32'hFFFF_FFFF;
+  int unsigned max_c;
+  longint unsigned sum;
+  function void add(int unsigned c);
+    n++;
+    sum += 64'(c);
+    if (c < min_c) min_c = c;
+    if (c > max_c) max_c = c;
+  endfunction
+  function string str();
+    return $sformatf("n=%0d min=%0d avg=%0.1f max=%0d", n, min_c, real'(sum) / real'(n), max_c);
+  endfunction
+endclass : floonoc_mesh_lat_stat
+
 class floonoc_mesh_scoreboard extends uvm_scoreboard;
 
   `uvm_component_utils(floonoc_mesh_scoreboard)
@@ -73,6 +90,12 @@ class floonoc_mesh_scoreboard extends uvm_scoreboard;
   int unsigned n_hops;             // RM8: link hops observed
   int unsigned n_path_violations;  // RM8: hops that disagreed with the XY model
   int unsigned exp_hop_sum;        // RM8: sum of exp_hops() over accepted flits
+
+  // Latency metrics (a measurement, not a check): accept-to-deliver cycles
+  // per matched flit, from the driver's accept_time (input handshake edge)
+  // to the monitor's obs_time (output handshake edge).
+  floonoc_mesh_lat_stat lat_by_hops [int unsigned];
+  floonoc_mesh_lat_stat lat_by_src  [int unsigned];
 
   // Fault-injection knobs for negative self-tests ONLY (prove the checkers
   // are not vacuous — see docs/verification_plan.md N1/N2). Default -1: off.
@@ -248,6 +271,16 @@ class floonoc_mesh_scoreboard extends uvm_scoreboard;
     end
 
     n_matched++;
+    record_latency(exp, t);
+  endfunction
+
+  protected function void record_latency(floonoc_mesh_flit_item exp, floonoc_mesh_flit_item obs);
+    int unsigned c = int'((obs.obs_time - exp.accept_time) / 10ns);
+    int unsigned h = exp.exp_hops();
+    if (!lat_by_hops.exists(h))              lat_by_hops[h] = new();
+    if (!lat_by_src.exists(exp.src_router))  lat_by_src[exp.src_router] = new();
+    lat_by_hops[h].add(c);
+    lat_by_src[exp.src_router].add(c);
   endfunction
 
   function int unsigned pending_count();
@@ -296,6 +329,10 @@ class floonoc_mesh_scoreboard extends uvm_scoreboard;
     `uvm_info("SB", $sformatf(
       "hops checked=%0d (XY model predicts %0d) path_violations=%0d",
       n_hops, exp_hop_sum, n_path_violations), UVM_LOW)
+    foreach (lat_by_hops[h])
+      `uvm_info("LAT", $sformatf("accept-to-deliver cycles, %0d hop(s): %s", h, lat_by_hops[h].str()), UVM_LOW)
+    foreach (lat_by_src[s])
+      `uvm_info("LAT", $sformatf("accept-to-deliver cycles, src R%0d: %s", s, lat_by_src[s].str()), UVM_LOW)
   endfunction
 
 endclass : floonoc_mesh_scoreboard

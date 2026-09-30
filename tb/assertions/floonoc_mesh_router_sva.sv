@@ -30,26 +30,24 @@
 //    StableDataIn assertion commented out, and the output arbiter may switch
 //    payloads between competing inputs while valid is high.
 //
-// MEASURED VACUITY, 2x2 / 27 flits: A_IN_VALID_STABLE currently never
-// evaluates. Its antecedent is `valid_in && !ready_in`, i.e. the DUT
-// backpressuring the TB, and C_IN_BACKPRESSURE below reads 0. The reason is
-// structural, not a stimulus accident: the mesh holds
-// NumRouters * NumPorts * (InFifoDepth + OutFifoDepth) = 4*5*4 = 80 flit
-// slots, the driver has at most one flit outstanding at a time, and the
-// sequence sends 27 — so no Eject input FIFO can ever fill. Confirmed by
-// experiment: with the driver's output ready forced to 0 for the whole run
-// (all 27 flits stuck in the mesh, delivered=0) all 27 were still accepted
-// on the input side with C_IN_BACKPRESSURE still 0.
+// VACUITY OF A_IN_VALID_STABLE DEPENDS ON THE TEST. Its antecedent is
+// `valid_in && !ready_in`, i.e. the DUT backpressuring the TB, witnessed by
+// C_IN_BACKPRESSURE below.
+//  - Smoke test (2x2, 30 flits): VACUOUS, C_IN_BACKPRESSURE reads 0. The mesh
+//    holds NumRouters * NumPorts * (InFifoDepth + OutFifoDepth) = 80 flit
+//    slots and the smoke stimulus is serial (one flit outstanding at a time),
+//    so no Eject input FIFO can fill. Confirmed by experiment: with every
+//    Eject output ready forced to 0, all flits were still accepted with
+//    C_IN_BACKPRESSURE at 0.
+//  - Hotspot test with +hs_fill (floonoc_mesh_hotspot_test): LIVE. Each
+//    source sends enough flits to fill every buffer on its path to a stalled
+//    target, so backpressure reaches the source's own Eject input and
+//    C_IN_BACKPRESSURE is non-zero at every source router (measured, see
+//    docs/compatibility.md). This is what makes the assertion do real work.
 //
-// The assertion is kept rather than deleted: it is a real TB-side
-// obligation, it is live code (mutating its antecedent to the reachable
-// `valid_in && ready_in` makes it fire at every router, so the statement is
-// compiled and sampled), and it starts doing work the moment the bench
-// outgrows the mesh's buffering — more flits in flight, a shallower
-// InFifoDepth, or a driver with more than one outstanding item.
-// C_IN_BACKPRESSURE is what keeps that fact VISIBLE instead of letting the
-// assertion sit silently vacuous; do not delete the cover to make the
-// assertion-coverage percentage look better.
+// C_IN_BACKPRESSURE is what keeps the vacuity VISIBLE per run instead of
+// letting the assertion sit silently vacuous; do not delete the cover to make
+// the assertion-coverage percentage look better.
 // -----------------------------------------------------------------------------
 module floonoc_mesh_router_sva
   import floo_tb_mesh_types_pkg::*;

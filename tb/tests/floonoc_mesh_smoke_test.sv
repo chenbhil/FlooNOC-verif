@@ -38,25 +38,30 @@ class floonoc_mesh_smoke_test extends uvm_test;
     env = floonoc_mesh_env::type_id::create("env", this);
   endfunction
 
-  virtual task run_phase(uvm_phase phase);
+  // The stimulus. Derived tests (hotspot) override only this; the watchdogs,
+  // drain and PASS criteria below are shared.
+  virtual task run_stimulus();
     floonoc_mesh_smoke_seq seq;
+    seq = floonoc_mesh_smoke_seq::type_id::create("seq");
+    // +mesh_num_random=N resizes the random phase (default 15): 15 draws
+    // cover little of a large mesh's src x dst cross.
+    void'($value$plusargs("mesh_num_random=%d", seq.num_random));
+    seq.start(env.vsqr);
+  endtask
+
+  virtual task run_phase(uvm_phase phase);
     bit seq_done = 1'b0;
     int unsigned waited = 0;
     int unsigned drain_budget = drain_cycle_budget();
 
     phase.raise_objection(this, "mesh smoke sequence running");
 
-    seq = floonoc_mesh_smoke_seq::type_id::create("seq");
-    // +mesh_num_random=N resizes the random phase (default 15): 15 draws
-    // cover little of a large mesh's src x dst cross.
-    void'($value$plusargs("mesh_num_random=%d", seq.num_random));
-
     // Run the sequence under a forward-progress watchdog: if stimulus can
     // no longer be accepted (e.g. permanent backpressure), fail with a
     // diagnostic dump instead of hanging until the global watchdog.
     fork
       begin
-        seq.start(env.vsqr);
+        run_stimulus();
         seq_done = 1'b1;
       end
     join_none
