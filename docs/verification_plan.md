@@ -33,6 +33,22 @@ vacuous.
 | N1 | Expected payload of accepted flit #3 corrupted in the scoreboard model | `corrupt_payload_idx` (config_db, `env.sb`) | R2 integrity compare | `integrity/order mismatch` | **passing** (caught) |
 | N2 | Accepted flit #5 modeled at the wrong output port | `corrupt_route_idx` (config_db, `env.sb`) | R1/R5/R6 (unexpected flit, stuck expectation) | `unexpected flit` / `integrity/order mismatch` / `never delivered` | **passing** (caught) |
 | N3 | Permanent output backpressure (`ready_pct = 0` on all outputs) | config_db, `env.agent.drv` | forward-progress watchdogs (sequence + drain budgets) | `forward progress stopped` | **passing** (caught) |
+| N4 | Driven flit #0 (directed row 0, Eject→(2,1)=East) encoded on the wire with `dst_x`/`dst_y` **swapped** → (1,2)=North, while the driver's `sent_ap` publishes the true intent. A stand-in for an `as_flit()` encode bug | `corrupt_encode_idx` (config_db, `env.agent.drv`) | R1/R5 against driver-intent expectations | `unexpected flit` / `never delivered` | **passing** (caught) |
+
+**N4 proves a hole that existed.** Until 2026-09, the single-router
+scoreboard took its expectations from the input monitor's `from_flit()`
+decode of the wire, so an encode bug was self-certifying: the wrong header
+decoded into the same wrong expectation and the DUT routed it "correctly".
+Measured by mutation on Verilator 5.052: with `sb.in_imp` temporarily fed from
+`mon.in_ap` again, N4 **passes** (`accepted=25 delivered=25 matched=25
+mismatched=0`, 0 `UVM_ERROR`). With the driver feed, N4 fails as intended:
+`unexpected flit at output 0(North) (nothing pending from input 4)` plus
+`1 accepted flit(s) never delivered` (`matched=22 mismatched=3 pending=1`;
+the two extra mismatches are the Eject→East FIFO shifting by one). The
+scoreboard is now fed by the driver's `sent_ap` (the original item, cloned
+after the input handshake), exactly like the mesh bench. The input monitor
+additionally checks on every input handshake that `hdr.src_id` decodes to
+the physical input port.
 
 Negative runs write coverage to a scratch file (`logs/coverage_neg.dat`)
 so they never pollute the primary `logs/coverage.dat` evidence.
@@ -75,7 +91,7 @@ only 2x2 has been run.
 | RM5 | No loss / no duplication end to end across the mesh | same + drain phase + 200ns idle tail | `check_phase`: pending==0, accepted==delivered; `write_mesh_out`: error on empty expectation queue; malformed-header decode reported at the boundary | — | — | **passing** |
 | RM6 | Ordering per (src router, dst router) pair | directed 3-flit same-pair burst (phase C), plus whatever repeats the random phase draws | per-pair FIFO expectation queues, `pop_front` compare | — | — | **passing**, proven live by mutation |
 | RM7 | Hop-count distribution reaches the mesh diameter | directed diagonals guarantee a `MeshDiameter` case | — | — | `cp_hops` | **passing** |
-| RM8 | Path correctness at intermediate routers | — | **not checked**: `floonoc_mesh_if` exposes only Eject endpoints. Covered instead by the DUT's own per-router `XYDirectionNotAllowed` / `NoLoopback` assertions, which elaborate in all four routers and run under `--assert` | DUT-internal | — | **by DUT assertion** |
+| RM8 | Path correctness at intermediate routers | same (every link is crossed in both directions by phase A) | `floonoc_mesh_link_monitor` observes every North/East/South/West output handshake through a read-only `floonoc_mesh_link_if`; `write_mesh_hop` requires each hop to leave in the direction `exp_out_port_at(router x, router y, hdr.dst_id)` predicts (`path violation` otherwise). `check_phase` completeness invariant: hops observed == Σ `exp_hops()` over accepted flits. A `valid` toward a boundary port (no neighbor, ready tied 0) is an immediate `LINKMON` error. TB-owned, so it still runs under `-D ASSERTS_OFF` | DUT's own `XYDirectionNotAllowed` / `NoLoopback` remain as a second, non-independent layer | `link_cg` (one bin per existing link) | **passing** (40 hops checked, 40 predicted, 0 violations) |
 | RM9 | Illegal destination (src == dst) | — | not re-tested at UVM level: `c_legal_route` makes it unconstructible, and the DUT's own `NoLoopback` assertion covers it | — | — | **out of scope** |
 
 **Stimulus, in full.** `floonoc_mesh_smoke_seq` sends 30 flits at 2x2:
@@ -107,10 +123,32 @@ is therefore 75% (3/4) by design. See
 wire-decoded `hdr.dst_id` and the physical Eject port the monitor observed —
 so it catches a real DUT misroute. It is not a check of the XY routing
 *model*: under XY routing the eject router is the destination by definition,
-so the expectation makes no prediction. The model (`exp_out_port_at` /
-`exp_path`) reaches the scoreboard only through `exp_hops()`, which feeds
-coverage and printing. Intermediate-hop checking is RM8, and is deliberately
-out of this interface's reach.
+so the expectation makes no prediction. The routing *model*
+(`exp_out_port_at`) is checked by RM8, one hop at a time.
+
+**How RM8 checks the path.** The internal link signals live in our own
+wrapper, `floonoc_mesh_dut` (`dut_valid_out` / `dut_ready_out` /
+`dut_data_out`, indexed `[router][direction][vc]`). `tb_top_mesh` copies them
+into a read-only `floonoc_mesh_link_if` by hierarchical reference. It never
+touches vendor RTL and never changes the wrapper's ports. The check is
+stateless: flits carry no ID, and none is needed, because "a flit for `dst`
+leaving router (x,y) must go the way `exp_out_port_at` says" depends only on
+the header and the location. If every hop decision matches the model, the
+path equals `exp_path()` by induction, and the final Eject decision is RM1.
+The completeness invariant (Σ `exp_hops()` == hops observed, enforced once
+the mesh has drained) catches a hop the monitor missed. The directed phase
+alone contributes 8×1 + 4×2 + 3×2 = 22 link hops; the smoke run totals 40.
+It replaced reliance on the DUT's own `XYDirectionNotAllowed` / `NoLoopback`
+assertions, which are designer-written (not independent) and compiled out
+under `-D ASSERTS_OFF`, the xezim configuration. Verified: a scratch build
+with `+define+ASSERTS_OFF` has 0 references to `XYDirectionNotAllowed` in the
+generated C++ (12 normally), and still reports 40 hops checked and still
+catches NM4.
+
+The boundary-valid check cannot be proven live by a negative test. That
+would need a DUT-side fault, which the negative-test rule forbids. It is
+covered by construction: a boundary output's `ready` is tied 0, so without
+the check an off-mesh route would surface only as a watchdog timeout.
 
 **Why the expectation side is fed by the driver, not the input monitor.** The
 scoreboard subscribes to the driver's `sent_ap` — the original sequence item,
@@ -121,8 +159,8 @@ decoded back into the same wrong expectation, faithfully routed there by the
 DUT, and scored as a match, with the bench reporting PASS having never sent a
 flit where the sequence asked. The input monitor keeps its own port for
 protocol observation and independently checks that each flit's `hdr.src_id`
-decodes to the port it was physically injected on. (The single-router bench
-has the same weakness by construction; retrofitting it is a follow-up.)
+decodes to the port it was physically injected on. The single-router bench
+now uses the same arrangement; see N4.
 
 ### Negative self-tests (mesh checker effectiveness)
 
@@ -131,6 +169,7 @@ has the same weakness by construction; retrofitting it is a follow-up.)
 | NM1 | Expected payload of one accepted flit corrupted in the scoreboard model | `corrupt_payload_idx` (config_db, `env.sb`) | RM2 integrity compare | `integrity/order mismatch` | **passing** (caught) |
 | NM2 | One accepted flit modeled as ejecting at the wrong router | `corrupt_route_idx` (config_db, `env.sb`) | RM1/RM5/RM6 | `unexpected flit` / `integrity/order mismatch` / `never delivered` | **passing** (caught) |
 | NM3 | Permanent Eject backpressure on every router (`ready_pct = 0`) | config_db, `env.agent.drv` | forward-progress watchdogs (sequence + drain budgets) | `forward progress stopped` | **passing** (caught) |
+| NM4 | The XY model's expected direction for observed link hop #0 perturbed to the next direction (mod 4), in the scoreboard | `corrupt_hop_idx` (config_db, `env.sb`) | RM8 per-hop path check | `path violation` | **passing** (caught: `flit for R2(0,1) at R0(0,0) left North, XY model says East`) |
 
 Run with `make run-negative-mesh`, which inverts the pass criteria: a
 negative test that reports **no** `UVM_ERROR`, or that misses the expected

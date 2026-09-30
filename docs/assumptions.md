@@ -78,6 +78,13 @@ source.
 are disabled. Verified by reading `floo_route_select.sv` and the
 crossbar logic in `floo_router.sv`.
 
+**Checked on the input side:** the input monitor verifies on every input
+handshake that `hdr.src_id` decodes to the physical input port it arrived
+on (`MON` error otherwise). An encode bug in the driver therefore surfaces
+at the input, not as a confusing "unexpected flit" downstream. The
+scoreboard's expectations come from the driver's intent (`sent_ap`), not
+from this decode; see verification_plan.md N4.
+
 **Invalidated if:** collective operations are enabled.
 
 ## A6 — Illegal-destination behavior is out of scope
@@ -134,6 +141,20 @@ practice by the first end-to-end run: all 12 directed flits, including the
 which cannot happen if the field is rewritten in flight.
 
 **Invalidated if:** `SourceRouting` or collective operations are enabled.
+
+### A7-M — Inter-router links are observed by hierarchical reference
+
+The per-hop path check (RM8) needs the North/East/South/West handshakes,
+which `floonoc_mesh_if` does not expose. `tb_top_mesh` copies them into the
+read-only `floonoc_mesh_link_if` through hierarchical references to
+`i_mesh.dut_valid_out` / `dut_ready_out` / `dut_data_out`. Those arrays belong
+to **our** wrapper `floonoc_mesh_dut`, not to vendor RTL. Nothing is driven
+back, and the wrapper's ports are unchanged. `ready` on a link is the
+neighbor's input ready, or the tie-off `0` at a boundary.
+
+**Invalidated if:** the wrapper's internal array names or their
+`[router][direction][vc]` shape change, or more than one virtual channel is
+enabled (the monitor reads VC 0 only).
 
 ## Environment-level decisions
 

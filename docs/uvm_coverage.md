@@ -39,9 +39,10 @@ not verified against the standard text.
 
 | Construct | Exercised in | Role in this bench | UVM area |
 |---|---|---|---|
-| `uvm_analysis_port #(T)` | `tb/agents/floonoc_monitor.sv:12-13` (`in_ap`, `out_ap`) | monitor broadcasts accepted + delivered flits | TLM analysis |
+| `uvm_analysis_port #(T)` | `tb/agents/floonoc_monitor.sv` (`in_ap`, `out_ap`); `tb/agents/floonoc_driver.sv` (`sent_ap`) | monitor broadcasts accepted + delivered flits; driver publishes a clone of each item's intent once accepted | TLM analysis |
 | `` `uvm_analysis_imp_decl(_in/_out) `` | `tb/env/floonoc_scoreboard.sv:12-13` | two distinct analysis exports into one scoreboard | TLM analysis |
-| analysis `connect` (monitor → sb, monitor → cov) | `tb/env/floonoc_env.sv` (connect_phase) | fans the monitor streams to scoreboard and coverage | TLM analysis |
+| analysis `connect` (driver → sb, monitor → sb, monitor → cov) | `tb/env/floonoc_env.sv` (connect_phase) | expectations from the driver's `sent_ap`, observations from the monitor's `out_ap` | TLM analysis |
+| `clone()` / hand-written `do_copy` / `do_compare` | `tb/sequences/floonoc_flit_item.sv` | field macros avoided (Verilator width warnings); without `do_copy`, `clone()` would copy nothing | Objects |
 
 ## Configuration & phasing
 
@@ -111,11 +112,29 @@ Measured on the 30-flit smoke run (15 directed + 15 random), `make cov-mesh`:
 | `cp_hops` | 100% (2/2) |
 | `cp_backpressure` | 100% (2/2) |
 | `x_src_dst` | **75% (12/16)** — at the ceiling |
+| `link_cg` (`floonoc_mesh_link_cov`) | **100% (8/8 links)**, 40 observed hops |
+| aggregate functional (`make cov-mesh`) | **88.9% (32/36)** |
 
 The four unhit cross bins are exactly `r[0]_x_r[0]`, `r[1]_x_r[1]`,
 `r[2]_x_r[2]` and `r[3]_x_r[3]`: the `src == dst` diagonal. All 12 legal
 pairs are hit. There is no stimulus gap behind the 85.7% — it is 24 of 28
 with 4 bins unreachable by construction, and 24 of 24 reachable bins hit.
+
+### Link coverage
+
+`floonoc_mesh_link_cov` subscribes to `floonoc_mesh_link_monitor::hop_ap` and
+has one bin per directed router-to-router link that exists. The bins run over
+`link_index()`, a dense numbering of the `(router, direction)` pairs for
+which `has_neighbor()` holds (`NumLinks`, 8 on 2x2). Boundary directions
+therefore have no bin at all, and nothing is hardcoded to 2x2. This is the
+workaround for Verilator 5.052 not parsing `with` on bins. The directed phase
+crosses every link in both directions, so the smoke run reads 100%.
+
+New mesh components for the per-hop path check (RM8):
+`floonoc_mesh_link_if` (read-only interface), `floonoc_mesh_link_monitor`
+(passive `uvm_monitor`), `floonoc_mesh_hop_item` (`uvm_sequence_item` with a
+hand-written `do_copy`), a third `` `uvm_analysis_imp_decl(_mesh_hop) `` export
+on the scoreboard, and `floonoc_mesh_link_cov` (`uvm_subscriber`).
 
 ## Not exercised at this milestone
 
