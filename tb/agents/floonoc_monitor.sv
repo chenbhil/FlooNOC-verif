@@ -31,6 +31,7 @@ class floonoc_monitor extends uvm_monitor;
 
   virtual task run_phase(uvm_phase phase);
     floonoc_flit_item item;
+    flit_t            in_flit;
     wait (vif.rst_n === 1'b1);
     forever begin
       @(posedge vif.clk);
@@ -40,8 +41,18 @@ class floonoc_monitor extends uvm_monitor;
           in_bp[p] = 1'b1;
         end
         if (vif.valid_in[p] === 1'b1 && vif.ready_in[p] === 1'b1) begin
+          // The src encoding must name the physical input port. The
+          // scoreboard keys output-side matching on the decoded src_id, so
+          // an encode bug here would otherwise surface only as a confusing
+          // "unexpected flit" far downstream.
+          in_flit = vif.data_in[p];
+          if (32'($bits(xy_id_t)'(in_flit.hdr.src_id)) != p) begin
+            `uvm_error("MON", $sformatf(
+              "input flit at port %0d(%s) carries hdr.src_id decoding to %0d",
+              p, dir_name(p), 32'($bits(xy_id_t)'(in_flit.hdr.src_id))))
+          end
           item = floonoc_flit_item::type_id::create($sformatf("mon_in_p%0d", p));
-          item.from_flit(vif.data_in[p], p, /*is_output*/ 1'b0, in_bp[p]);
+          item.from_flit(in_flit, p, /*is_output*/ 1'b0, in_bp[p]);
           in_bp[p] = 1'b0;
           `uvm_info("MON", {"in : ", item.convert2string()}, UVM_HIGH)
           in_ap.write(item);

@@ -44,6 +44,44 @@ class floonoc_flit_item extends uvm_sequence_item;
     super.new(name);
   endfunction
 
+  // Hand-written field automation, not `uvm_object_utils_begin/`uvm_field_int
+  // (same reasoning as floonoc_mesh_flit_item: on this Verilator 5.052 /
+  // UVM 1800.2-2017-1.0 combination the macro form trips WIDTHEXPAND/
+  // WIDTHTRUNC on every narrow field). Without these, clone() would copy
+  // NOTHING: the class has only `uvm_object_utils, so a clone would arrive
+  // with src_port=0, dst=(0,0), payload=0 — and the driver's sent_ap
+  // publishes clones, so every expectation would silently be wrong.
+  //
+  // do_compare checks only the flit's IDENTITY (src_port, dst_x, dst_y,
+  // payload). out_port and backpressured are OBSERVATION fields the monitor
+  // fills in; an expected item never has them set the way an observed one
+  // does. do_copy still copies everything — clone() is a full snapshot.
+  virtual function void do_copy(uvm_object rhs);
+    floonoc_flit_item rhs_;
+    if (!$cast(rhs_, rhs)) begin
+      `uvm_fatal("DO_COPY", "floonoc_flit_item::do_copy: $cast of rhs failed")
+    end
+    super.do_copy(rhs);
+    src_port      = rhs_.src_port;
+    dst_x         = rhs_.dst_x;
+    dst_y         = rhs_.dst_y;
+    payload       = rhs_.payload;
+    out_port      = rhs_.out_port;
+    backpressured = rhs_.backpressured;
+  endfunction
+
+  virtual function bit do_compare(uvm_object rhs, uvm_comparer comparer);
+    floonoc_flit_item rhs_;
+    bit result;
+    if (!$cast(rhs_, rhs)) return 0;
+    result = super.do_compare(rhs, comparer);
+    result &= (src_port == rhs_.src_port);
+    result &= (dst_x    == rhs_.dst_x);
+    result &= (dst_y    == rhs_.dst_y);
+    result &= (payload  == rhs_.payload);
+    return result;
+  endfunction
+
   function xy_id_t dst_id();
     xy_id_t id;
     id.x       = dst_x;

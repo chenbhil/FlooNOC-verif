@@ -65,7 +65,8 @@ run-negative:
 	./scripts/run_verilator.sh run-neg floonoc_neg_payload_test 'integrity/order mismatch'
 	./scripts/run_verilator.sh run-neg floonoc_neg_route_test   'unexpected flit|integrity/order mismatch|never delivered'
 	./scripts/run_verilator.sh run-neg floonoc_neg_stall_test   'forward progress stopped'
-	@echo "[run-negative] all 3 fault injections were caught — checkers are effective"
+	./scripts/run_verilator.sh run-neg floonoc_neg_encode_test  'unexpected flit|never delivered'
+	@echo "[run-negative] all 4 fault injections were caught — checkers are effective"
 
 # --- Mesh bench (2x2 mesh of floo_router, independent top-level) ---------------
 # Built and run as a SEPARATE Verilator binary from the single-router bench:

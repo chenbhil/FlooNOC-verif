@@ -46,8 +46,18 @@ class floonoc_scoreboard extends uvm_scoreboard;
   endfunction
 
   // Input handshake accepted by the DUT -> predict destination port
-  virtual function void write_in(floonoc_flit_item t);
-    int unsigned eo = t.exp_out();
+  //
+  // `t` is cloned before anything is stored or mutated: uvm_analysis_port
+  // hands the SAME handle to every subscriber, so if a second subscriber is
+  // ever attached to the driver's sent_ap, whether it sees the true or the
+  // N1-corrupted payload would otherwise depend on connection order.
+  virtual function void write_in(floonoc_flit_item orig);
+    floonoc_flit_item t;
+    int unsigned eo;
+    if (!$cast(t, orig.clone())) begin
+      `uvm_fatal("SB", "floonoc_scoreboard::write_in: $cast of clone() failed")
+    end
+    eo = t.exp_out();
     if (int'(n_accepted) == corrupt_payload_idx) begin
       t.payload = t.payload ^ payload_t'(1);
       `uvm_info("SB_NEG", $sformatf("injected payload corruption on accepted flit #%0d", n_accepted), UVM_LOW)
