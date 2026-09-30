@@ -20,6 +20,13 @@
 #   make run-mesh           - execute the mesh smoke test
 #   make run-negative-mesh  - mesh fault-injection self-tests (must all fail)
 #   make cov-mesh           - mesh coverage report (logs/coverage_report_mesh/)
+#
+# Mesh size / FIFO depth are build parameters (defaults 2x2, depth 2/2):
+#   make build-mesh MESH_X=5 MESH_Y=5 && make run-mesh MESH_X=5 MESH_Y=5
+# Non-default values tag the obj dir, logs and coverage file (e.g. _5x5), so
+# builds for different sizes coexist. Pass the SAME variables to every mesh
+# target. TEST=<name> picks the run-mesh/cov-mesh test (default
+# floonoc_mesh_smoke_test); PLUSARGS="+a +b" adds runtime plusargs.
 # -----------------------------------------------------------------------------
 
 # --- Pinned revisions ----------------------------------------------------------
@@ -33,6 +40,13 @@ export UVM_HOME       ?=
 export REQUIRED_VERILATOR ?= 5.052
 
 FLOONOC_DIR := rtl_or_vendor/floonoc
+
+# Mesh bench parameters (empty = config/dut_config_mesh.svh defaults)
+export MESH_X MESH_Y MESH_IN_FIFO_DEPTH MESH_OUT_FIFO_DEPTH
+ifneq ($(TEST),)
+export MESH_TEST := $(TEST)
+endif
+PLUSARGS ?=
 
 .PHONY: all setup sources lint build build-vcd run run-negative waves waves-vcd cov clean doctor lint-mesh lint-mesh-uvm build-mesh run-mesh run-negative-mesh cov-mesh
 
@@ -87,24 +101,12 @@ build-mesh: build/sources.f
 	./scripts/run_verilator.sh build-mesh
 
 run-mesh:
-	./scripts/run_verilator.sh run-mesh
+	./scripts/run_verilator.sh run-mesh $(PLUSARGS)
 
 # Mesh coverage report. Same three-way split as `make cov`, over the mesh
-# bench's own coverage file so the two benches' numbers never conflate.
+# bench's own (size- and test-tagged) coverage file so numbers never conflate.
 cov-mesh:
-	@mkdir -p logs/coverage_report_mesh
-	@{ \
-	  echo "=== FUNCTIONAL coverage (covergroups) ==="; \
-	  verilator_coverage --filter-type covergroup --report summary,hier logs/coverage_mesh.dat; \
-	  echo; \
-	  echo "=== ASSERTION coverage (SVA cover points) ==="; \
-	  verilator_coverage --filter-type user --report summary,hier logs/coverage_mesh.dat; \
-	  echo; \
-	  echo "=== CODE coverage (DUT line coverage) ==="; \
-	  verilator_coverage --filter-type line --report summary logs/coverage_mesh.dat; \
-	} | tee logs/coverage_summary_mesh.log
-	@verilator_coverage --annotate logs/coverage_report_mesh logs/coverage_mesh.dat > /dev/null
-	@echo "[cov-mesh] split summary: logs/coverage_summary_mesh.log; annotated source: logs/coverage_report_mesh/"
+	./scripts/run_verilator.sh cov-mesh
 
 # Mesh negative self-tests: each injects one fault into the checking path and
 # MUST fail with the expected diagnostic (proves the checkers are not vacuous).

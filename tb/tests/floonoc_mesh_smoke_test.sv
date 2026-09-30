@@ -47,6 +47,9 @@ class floonoc_mesh_smoke_test extends uvm_test;
     phase.raise_objection(this, "mesh smoke sequence running");
 
     seq = floonoc_mesh_smoke_seq::type_id::create("seq");
+    // +mesh_num_random=N resizes the random phase (default 15): 15 draws
+    // cover little of a large mesh's src x dst cross.
+    void'($value$plusargs("mesh_num_random=%d", seq.num_random));
 
     // Run the sequence under a forward-progress watchdog: if stimulus can
     // no longer be accepted (e.g. permanent backpressure), fail with a

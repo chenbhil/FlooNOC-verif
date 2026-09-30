@@ -6,12 +6,13 @@
 // `make run-negative-mesh`, which inverts the pass criteria.
 // See docs/verification_plan.md rows NM1-NM4.
 //
-// Injection indices count ACCEPTED flits (floonoc_mesh_scoreboard::n_accepted),
-// and floonoc_mesh_smoke_seq sends 12 directed + 15 random = 27 of them on a
-// 2x2 mesh. Indices 3 and 5 therefore land inside the DIRECTED phase, whose
-// (src, dst) pairs are topology-derived and identical on every run — so the
-// injection point is deterministic rather than a function of the random seed.
-// Keep them below the directed-phase count if the sequence ever changes.
+// Injection indices count ACCEPTED flits (floonoc_mesh_scoreboard::n_accepted).
+// RULE: NM1/NM2's indices (3 and 5) must land inside directed phase A (one
+// flit per directed link, 2*[(X-1)*Y + X*(Y-1)] of them) at EVERY mesh size,
+// so the injection point is topology-derived and seed-independent rather than
+// a function of the random draw. Phase A has 8 flits at 2x2 (the smallest 2-D
+// mesh), 24 at 3x3, 48 at 4x4 and 80 at 5x5, so 3 and 5 always qualify. (At
+// 2x2 the full run is 8 + 4 diagonal + 3 burst + 15 random = 30 flits.)
 // -----------------------------------------------------------------------------
 
 // NM1: corrupt one expected payload -> R2 integrity check must fire

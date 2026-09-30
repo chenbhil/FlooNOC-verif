@@ -33,7 +33,8 @@ package floo_tb_mesh_types_pkg;
   // Elaboration-time guard: the mesh UVM layer claims to be generic over
   // mesh shape, and that only holds if the coordinate widths can actually
   // represent the mesh. Nothing else enforces this — config/dut_config_mesh.svh
-  // sets `FLOO_VERIF_MESH_X_BITS`/`_Y_BITS` BY HAND, independently of
+  // DERIVES `FLOO_VERIF_MESH_X_BITS`/`_Y_BITS` by default but still lets them be
+  // overridden (+define+) independently of
   // `_MESH_X`/`_MESH_Y`, so editing one without the other silently truncates
   // every `x_bits_t'(...)`/`y_bits_t'(...)` cast below — measured case:
   // MeshX=3 with X_BITS=1 sends router 2 and router 5 to the wrong
