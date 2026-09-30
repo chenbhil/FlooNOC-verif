@@ -56,7 +56,7 @@ class floonoc_mesh_smoke_test extends uvm_test;
     // diagnostic dump instead of hanging until the global watchdog.
     fork
       begin
-        seq.start(env.agent.sqr);
+        seq.start(env.vsqr);
         seq_done = 1'b1;
       end
     join_none

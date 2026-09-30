@@ -1,13 +1,17 @@
 // -----------------------------------------------------------------------------
-// Driver: converts mesh flit items into valid/ready handshakes on the
-// injection router's Eject INPUT port, honoring the DUT contract that valid
-// stays asserted (with stable data) until ready (mirrors the DUT's
+// Driver for ONE router: converts mesh flit items into valid/ready handshakes
+// on router `router_idx`'s Eject INPUT port, honoring the DUT contract that
+// valid stays asserted (with stable data) until ready (mirrors the DUT's
 // StableValidIn assertion).
 //
-// It also owns every router's Eject OUTPUT ready line: each is re-randomized
-// every cycle (~80% high) to exercise backpressure while remaining a legal
-// sink. Note the loop is over NumRouters, not NumPorts: in the mesh only
-// Eject ports face the TB, one per router.
+// There is one driver (and one sequencer) per router, so several routers can
+// inject in the same cycle. Driver r owns ONLY valid_in[r], data_in[r] and
+// ready_out[r]; it never writes another router's bits. Its router index comes
+// from config_db ("router_idx"), set by floonoc_mesh_agent.
+//
+// ready_out[r] is re-randomized every cycle (~80% high) to exercise
+// backpressure while remaining a legal sink, unless the shared
+// floonoc_mesh_ready_ctrl holds it low or overrides the percentage.
 //
 // Timing discipline: all pins are driven with non-blocking assignments at
 // posedge and all DUT outputs are read at posedge (pre-edge values), which
@@ -18,6 +22,9 @@ class floonoc_mesh_driver extends uvm_driver #(floonoc_mesh_flit_item);
   `uvm_component_utils(floonoc_mesh_driver)
 
   virtual floonoc_mesh_if vif;
+
+  int unsigned            router_idx;
+  floonoc_mesh_ready_ctrl ready_ctrl;
 
   // Probability (percent) that a router's Eject ready is high in a given cycle
   int unsigned ready_pct = 80;
@@ -51,6 +58,15 @@ class floonoc_mesh_driver extends uvm_driver #(floonoc_mesh_flit_item);
     if (!uvm_config_db#(virtual floonoc_mesh_if)::get(this, "", "vif", vif)) begin
       `uvm_fatal("DRV", "virtual interface not found in config_db")
     end
+    if (!uvm_config_db#(int unsigned)::get(this, "", "router_idx", router_idx)) begin
+      `uvm_fatal("DRV", "router_idx not found in config_db")
+    end
+    if (router_idx >= NumRouters) begin
+      `uvm_fatal("DRV", $sformatf("router_idx %0d outside a %0d-router mesh", router_idx, NumRouters))
+    end
+    if (!uvm_config_db#(floonoc_mesh_ready_ctrl)::get(this, "", "ready_ctrl", ready_ctrl)) begin
+      `uvm_fatal("DRV", "ready_ctrl not found in config_db")
+    end
     // Overridable for backpressure scenarios (0 = outputs never ready,
     // used by the floonoc_mesh_neg_stall self-test)
     if (uvm_config_db#(int)::get(this, "", "ready_pct", rp)) begin
@@ -62,9 +78,9 @@ class floonoc_mesh_driver extends uvm_driver #(floonoc_mesh_flit_item);
   virtual task run_phase(uvm_phase phase);
     floonoc_mesh_flit_item item;
 
-    vif.valid_in  <= '0;
-    vif.data_in   <= '0;
-    vif.ready_out <= '1;
+    vif.valid_in[router_idx]  <= 1'b0;
+    vif.data_in[router_idx]   <= '0;
+    vif.ready_out[router_idx] <= 1'b1;
 
     fork
       drive_output_ready();
@@ -84,13 +100,19 @@ class floonoc_mesh_driver extends uvm_driver #(floonoc_mesh_flit_item);
   // handshake from the next posedge on. Hold until ready seen at an edge.
   task drive_flit(floonoc_mesh_flit_item item);
     floonoc_mesh_flit_item sent_item;
-    int unsigned r = item.src_router;
+    int unsigned r = router_idx;
+    if (item.src_router != router_idx) begin
+      `uvm_fatal("DRV", $sformatf(
+        "driver for router %0d was handed an item for source router %0d (sequence started on the wrong sequencer): %s",
+        router_idx, item.src_router, item.convert2string()))
+    end
     vif.valid_in[r] <= 1'b1;
     vif.data_in[r]  <= item.as_flit();
     do begin
       @(posedge vif.clk);
     end while (!(vif.valid_in[r] === 1'b1 && vif.ready_in[r] === 1'b1));
     vif.valid_in[r] <= 1'b0;
+    item.accept_time = $realtime;  // the handshake edge; carried by the clone
     `uvm_info("DRV", {"sent: ", item.convert2string()}, UVM_HIGH)
     // Publish AFTER the handshake completes, so the write is equivalent to
     // an "accepted" event, not merely "requested" — a flit the DUT never
@@ -108,11 +130,18 @@ class floonoc_mesh_driver extends uvm_driver #(floonoc_mesh_flit_item);
 
   // Legal random sink: ready may toggle freely; the DUT does not require
   // ready stability (ready/valid dependency rules only constrain valid).
+  // Only this driver's own router; see floonoc_mesh_ready_ctrl for the
+  // hold / override precedence.
   task drive_output_ready();
+    int unsigned pct;
     forever begin
       @(posedge vif.clk);
-      for (int unsigned r = 0; r < NumRouters; r++) begin
-        vif.ready_out[r] <= bit'($urandom_range(99) < ready_pct);
+      if (ready_ctrl.hold[router_idx]) begin
+        vif.ready_out[router_idx] <= 1'b0;
+      end else begin
+        pct = (ready_ctrl.pct_override[router_idx] >= 0)
+              ? unsigned'(ready_ctrl.pct_override[router_idx]) : ready_pct;
+        vif.ready_out[router_idx] <= bit'($urandom_range(99) < pct);
       end
     end
   endtask

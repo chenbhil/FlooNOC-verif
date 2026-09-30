@@ -68,7 +68,7 @@ class floonoc_mesh_neg_stall_test extends floonoc_mesh_smoke_test;
 
   virtual function void build_phase(uvm_phase phase);
     super.build_phase(phase);
-    uvm_config_db#(int)::set(this, "env.agent.drv", "ready_pct", 0);
+    uvm_config_db#(int)::set(this, "env.agent.drv_*", "ready_pct", 0);
     seq_cycle_budget     = 300;
     drain_base_cycles    = 100;
     drain_per_hop_cycles = 0;

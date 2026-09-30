@@ -1,5 +1,11 @@
 // -----------------------------------------------------------------------------
-// Mesh smoke sequence.
+// Mesh smoke sequence — a VIRTUAL sequence (run on floonoc_mesh_vsequencer).
+//
+// Each flit is sent as a one-item floonoc_mesh_send_seq on the sequencer of
+// its own src_router, and each send blocks until the driver has seen the
+// input handshake — so the stimulus is exactly as serial, and in exactly the
+// same order, as when one driver served every router. NM1/NM2 index accepted
+// flits, so that serial order is what keeps their injection points valid.
 //
 // Directed phase A: every physical inter-router link, in both directions,
 //   as a 1-hop case (inject at r's Eject, destination is r's neighbor).
@@ -18,9 +24,10 @@
 // unconstructible, and Phase 1's RTL-level smoke check already confirmed the
 // DUT's own NoLoopback assertion fires for it.
 // -----------------------------------------------------------------------------
-class floonoc_mesh_smoke_seq extends uvm_sequence #(floonoc_mesh_flit_item);
+class floonoc_mesh_smoke_seq extends uvm_sequence;
 
   `uvm_object_utils(floonoc_mesh_smoke_seq)
+  `uvm_declare_p_sequencer(floonoc_mesh_vsequencer)
 
   // Enough draws that the (src, dst) cross sees repeated pairs, which is
   // what actually exercises the per-pair ordering check R6.
@@ -33,15 +40,23 @@ class floonoc_mesh_smoke_seq extends uvm_sequence #(floonoc_mesh_flit_item);
     super.new(name);
   endfunction
 
+  // Send one prepared item on its source router's sequencer, blocking until
+  // the input handshake.
+  task send_item(floonoc_mesh_flit_item item);
+    floonoc_mesh_send_seq s;
+    s = floonoc_mesh_send_seq::type_id::create($sformatf("send_%0d", n_sent));
+    s.items.push_back(item);
+    s.start(p_sequencer.sqr[item.src_router], this);
+  endtask
+
   // One directed flit with a recognizable payload (0xFACE_....).
   task send_directed(int unsigned src, int unsigned dst, string why);
     floonoc_mesh_flit_item item;
     item = floonoc_mesh_flit_item::type_id::create($sformatf("directed_%0d", n_sent));
-    start_item(item);
     item.src_router = src;
     item.dst_router = dst;
     item.payload    = payload_t'(64'hFACE_0000_0000_0000 + 64'(n_sent));
-    finish_item(item);
+    send_item(item);
     `uvm_info("SEQ", $sformatf("directed[%0s]: %s", why, item.convert2string()), UVM_MEDIUM)
     n_sent++;
   endtask
@@ -119,8 +134,7 @@ class floonoc_mesh_smoke_seq extends uvm_sequence #(floonoc_mesh_flit_item);
           "randomize() failed on a %0d-router mesh — c_legal_route is unsatisfiable (1x1 mesh?)",
           NumRouters))
       end
-      start_item(item);
-      finish_item(item);
+      send_item(item);
       `uvm_info("SEQ", {"random:   ", item.convert2string()}, UVM_MEDIUM)
       n_sent++;
     end

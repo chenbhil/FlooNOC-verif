@@ -48,6 +48,15 @@ class floonoc_mesh_flit_item extends uvm_sequence_item;
   bit          hdr_malformed;
   string       hdr_malformed_why;
 
+  // Timestamps, both taken at a posedge (the handshake edge), so their
+  // difference is a whole number of clock cycles.
+  //  accept_time: stamped by the DRIVER on the original item at the input
+  //               handshake, before the clone is published (so the sequence
+  //               sees it after finish_item and the scoreboard sees it too).
+  //  obs_time:    stamped by the MONITOR at the output handshake.
+  realtime     accept_time;
+  realtime     obs_time;
+
   `uvm_object_utils(floonoc_mesh_flit_item)
 
   // Both endpoints are plain router indices, so the whole legality rule is
@@ -95,6 +104,8 @@ class floonoc_mesh_flit_item extends uvm_sequence_item;
     is_output_obs = rhs_.is_output_obs;
     hdr_malformed     = rhs_.hdr_malformed;
     hdr_malformed_why = rhs_.hdr_malformed_why;
+    accept_time       = rhs_.accept_time;
+    obs_time          = rhs_.obs_time;
   endfunction
 
   virtual function bit do_compare(uvm_object rhs, uvm_comparer comparer);
