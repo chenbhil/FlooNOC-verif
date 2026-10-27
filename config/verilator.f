@@ -37,8 +37,13 @@ config/coverage_scope.vlt
 // Trace into class/struct-heavy scopes conservatively
 --trace-structs
 
-// UVM library: no DPI available under Verilator's UVM bring-up path
-+define+UVM_NO_DPI
+// UVM library DPI: the regex and command-line helpers are compiled from
+// tb/dpi/uvm_dpi_nohdl.cc (added by scripts/run_verilator.sh). The HDL
+// backdoor stays off: the kit's uvm_hdl.c has no Verilator backend.
++define+UVM_HDL_NO_DPI
+
+// uvm_svcmd_dpi.c reads the command line through vpi_get_vlog_info()
+--vpi
 
 // Documented, reviewed warning waivers (no global suppression)
 config/verilator_waivers.vlt

@@ -136,6 +136,7 @@ do_build() { # $1 = fst|vcd
   fi
   log_and_run "logs/build_$fmt.log" \
     verilator --binary -j 0 \
+      -CFLAGS "-I$UVM_HOME/src/dpi -I$PWD/tb/dpi/include -Wno-deprecated-declarations" \
       ${lz4_cflags:+-CFLAGS "$lz4_cflags"} \
       -LDFLAGS "$lz4_ldflags" \
       "$trace_flag" \
@@ -143,6 +144,7 @@ do_build() { # $1 = fst|vcd
       -f "$BUILD/sources.f" \
       +incdir+"$UVM_HOME/src" \
       "$UVM_HOME/src/uvm_pkg.sv" \
+      tb/dpi/uvm_dpi_nohdl.cc \
       "${TB_SOURCES[@]}" \
       --top-module tb_top \
       -Mdir "$obj" \
@@ -161,6 +163,7 @@ do_build_mesh() {
   fi
   log_and_run "logs/build_mesh$MESH_TAG.log" \
     verilator --binary -j 0 \
+      -CFLAGS "-I$UVM_HOME/src/dpi -I$PWD/tb/dpi/include -Wno-deprecated-declarations" \
       ${lz4_cflags:+-CFLAGS "$lz4_cflags"} \
       -LDFLAGS "$lz4_ldflags" \
       --trace-fst \
@@ -169,6 +172,7 @@ do_build_mesh() {
       -f "$BUILD/sources.f" \
       +incdir+"$UVM_HOME/src" \
       "$UVM_HOME/src/uvm_pkg.sv" \
+      tb/dpi/uvm_dpi_nohdl.cc \
       "${TB_MESH_SOURCES[@]}" \
       --top-module tb_top_mesh \
       -Mdir "$MESH_OBJ" \

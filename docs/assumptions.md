@@ -181,7 +181,7 @@ enabled (the monitor reads VC 0 only).
   instead of a second manifest. This avoids duplicate dependency
   checkouts and keeps revisions bit-identical to upstream CI.
 - **E2:** UVM library is the unmodified Accellera 1800.2-2017 1.0 kit
-  (`UVM_HOME`), compiled with `+define+UVM_NO_DPI`. DPI-dependent UVM
-  features (regex config matching, component name checks, HDL backdoor)
-  are accepted as degraded; the name-check emits benign
-  `UVM/COMP/NAME` warnings at startup (see docs/known_issues.md KI-2).
+  (`UVM_HOME`), with its DPI-C regex and command-line helpers compiled
+  in (`tb/dpi/uvm_dpi_nohdl.cc`). Only the HDL backdoor is disabled
+  (`+define+UVM_HDL_NO_DPI`; the kit has no Verilator backend for it),
+  and the bench does no backdoor access (see docs/known_issues.md KI-2).

@@ -46,15 +46,26 @@ should prefer the VCD path.
 flags (`-CFLAGS -I$(brew --prefix lz4)/include`, `-LDFLAGS "-L... -llz4"`),
 handled in `scripts/run_verilator.sh`.
 
-## KI-2 — UVM_NO_DPI startup warnings (cosmetic)
+## KI-2 — UVM HDL backdoor disabled (was: UVM_NO_DPI startup warnings) — RESOLVED 2026-10-27
 
-With `+define+UVM_NO_DPI` (required — Verilator provides no SV-DPI for
-the UVM regex/name-check helpers), UVM 1800.2-2017 emits at time 0:
-one `UVM/COMP/NAMECHECK` info ("name checks require DPI") and one benign
-`UVM/COMP/NAME` warning per component ("uvm_test_top ... violates name
-constraints", 28 total in the smoke test). Functionality (config_db
-wildcard matching for our simple `"*"`/`"vif"` keys, factory, phasing)
-is unaffected. Accepted as cosmetic; do not add these to error greps.
+The bench used to build UVM with `+define+UVM_NO_DPI`. UVM's pure-SV
+fallback for `uvm_re_match` only does glob matching, so the component
+name check (a POSIX regex) failed for every component: one
+`UVM/COMP/NAMECHECK` info plus one `UVM/COMP/NAME` warning per component
+(29 single-router, 103 mesh). The names were legal.
+
+Now the kit's regex and command-line C helpers are compiled in
+(`tb/dpi/uvm_dpi_nohdl.cc`, added by `scripts/run_verilator.sh`, with
+`--vpi` for `vpi_get_vlog_info`), and the runs end with 0 UVM warnings.
+Two deliberate gaps remain:
+
+- **HDL backdoor off** (`+define+UVM_HDL_NO_DPI`): the kit's `uvm_hdl.c`
+  has backends only for VCS, Questa and Xcelium and `#error`s otherwise.
+  The bench does no backdoor access.
+- **macOS shim:** the kit's `uvm_dpi.h` includes Linux's `<malloc.h>`;
+  `tb/dpi/include/malloc.h` forwards it to `<stdlib.h>`. The kit's
+  `sprintf` deprecation notices are silenced with
+  `-Wno-deprecated-declarations` on that compile only.
 
 ## KI-3 — Verilator covergroup limitations (worked around)
 

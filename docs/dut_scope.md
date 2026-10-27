@@ -112,5 +112,5 @@ by `make sources` into `build/sources.f`.
 | unpacked struct params (`axi_cfg_t`, `collect_op_be_cfg_t`) | `floo_pkg` | OK |
 | `(* ungroup *)` attribute | `floo_router.sv` | accepted (ignored) |
 | 1-bit vs 4-bit enum compare in `NoLoopback` assert | `floo_router.sv:541` | WIDTHEXPAND warning, waived with justification |
-| UVM class library, config_db, phasing, TLM | UVM 1800.2-2017 1.0 | works with `+define+UVM_NO_DPI` |
+| UVM class library, config_db, phasing, TLM | UVM 1800.2-2017 1.0 | works with the DPI-C helpers compiled in, HDL backdoor off (`UVM_HDL_NO_DPI`) |
 | class-member coverpoints | TB coverage | **unsupported (COVERIGN)** — worked around with `with function sample(...)` |

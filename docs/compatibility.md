@@ -15,7 +15,7 @@ three negative self-tests re-confirmed green with no bench changes.
 | FlooNoC | `14c253c996fcdc78b793fe28ac18964769b768df` (tag `v0.8.4`), unmodified |
 | common_cells | 1.39.0 @ `9ca8a7655f741e7dd5736669a20a301325194c28` (Bender.lock) |
 | axi (axi_pkg.sv only) | 0.39.9 @ `a256a3b86394fedf19e361047fccfdd7f6ef83e4` (Bender.lock) |
-| UVM | Accellera 1800.2-2017 1.0 kit (`UVM_HOME`), `+define+UVM_NO_DPI`, unmodified — tested version; nothing 1.0-specific is used, so any compatible 1800.2 UVM should work |
+| UVM | Accellera 1800.2-2017 1.0 kit (`UVM_HOME`), DPI-C regex/command-line helpers compiled in, HDL backdoor off (`UVM_HDL_NO_DPI`), unmodified — tested version; nothing 1.0-specific is used, so any compatible 1800.2 UVM should work |
 | Other Bender deps (iDMA, cvfpu, atomics, ...) | fetched/pinned by Bender.lock, **not compiled** |
 
 ## Selected DUT and configuration
@@ -34,9 +34,10 @@ Key options (full `.f` in `config/verilator.f`, exact command preserved in
 verilator --binary -j 0 -sv --timing --assert
   --coverage-user --coverage-line config/coverage_scope.vlt
   --trace-fst --trace-structs --x-initial 0 --x-assign 0
-  +define+UVM_NO_DPI config/verilator_waivers.vlt
+  +define+UVM_HDL_NO_DPI --vpi config/verilator_waivers.vlt
+  -CFLAGS "-I<UVM>/src/dpi -I tb/dpi/include -Wno-deprecated-declarations"
   -CFLAGS -I<lz4>/include -LDFLAGS "-L<lz4>/lib -llz4"
-  -f build/sources.f <uvm_pkg.sv> <tb sources> --top-module tb_top
+  -f build/sources.f <uvm_pkg.sv> tb/dpi/uvm_dpi_nohdl.cc <tb sources> --top-module tb_top
 ```
 
 (`--coverage-line` is scoped to the DUT closure by
@@ -214,7 +215,8 @@ Two checks were additionally proven live by mutation rather than by argument:
 | SVA assertions | proven | 3 asserts + 3 covers execute (`--assert`); cover counts in coverage.dat (25/25/6) |
 | Covergroups | proven (with workaround) | named bins + cross sample 25 real transactions |
 | Factory/overrides | exercised implicitly | `type_id::create` everywhere; no override test yet |
-| UVM RAL / DPI-based features | out of scope / unavailable | `UVM_NO_DPI` |
+| UVM DPI-C helpers (regex, command line, name check) | proven | `tb/dpi/uvm_dpi_nohdl.cc`; 0 UVM warnings |
+| UVM RAL / HDL backdoor | out of scope / unavailable | `UVM_HDL_NO_DPI` |
 
 ## Unsupported constructs encountered
 
@@ -222,7 +224,7 @@ Two checks were additionally proven live by mutation rather than by argument:
 |---|---|---|---|---|---|
 | 1 | Covergroup coverpoint referencing enclosing class member | local UVM scaffold | `COVERIGN ... ignoring covergroup` (tb/coverage/floonoc_cov.sv:21 in first draft) | `with function sample(...)` arguments | No — full covergroup function retained |
 | 2 | fstcpp FST writer non-binary encoding path | tool (Verilator) | intermittent `FST_CHECK failed: enc == EncodingType::BINARY` / SIGTRAP at exit | `--x-initial 0 --x-assign 0` + bounded retry in `make waves`; upstream issue drafted (`docs/verilator_fst_issue.md`) | Minor — waves reliable via retry; sim correctness unaffected |
-| 3 | UVM DPI helpers (regex, name check, backdoor) | upstream verification IP (UVM) | `UVM/COMP/NAMECHECK` info + benign name warnings | `+define+UVM_NO_DPI` (standard for Verilator) | No — smoke scope unaffected |
+| 3 | UVM HDL backdoor (`uvm_hdl.c`) | upstream verification IP (UVM) | `#error "hdl vendor backend is missing"` (VCS/Questa/Xcelium only) | regex + command-line helpers compiled without it (`tb/dpi/uvm_dpi_nohdl.cc`), `+define+UVM_HDL_NO_DPI` | No — the bench does no backdoor access |
 | 4 | `<lz4.h>` not found building `verilated_fst_c.cpp` | tool packaging (macOS/Homebrew) | fatal C++ compile error | explicit lz4 `-CFLAGS/-LDFLAGS` in run script | No |
 | 5 | Width-style warnings in upstream RTL (rr_arb_tree assert, axi_pkg math, floo_router enum compare) | core DUT RTL + required dependency | `WIDTHTRUNC`/`WIDTHEXPAND`/`UNSIGNED` | per-file documented waivers (`config/verilator_waivers.vlt`) | No — semantically benign, each reviewed |
 

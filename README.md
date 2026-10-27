@@ -166,8 +166,9 @@ build/ logs/ waves/   generated (gitignored)
   intermittent it was. `make waves` still retries automatically and
   `make waves-vcd` remains a deterministic fallback — prefer it where CI
   must not depend on retries.
-- UVM runs with `UVM_NO_DPI`: benign component-name warnings at startup;
-  regex config_db patterns unavailable (KI-2).
+- UVM runs with its DPI-C regex and command-line helpers
+  (`tb/dpi/uvm_dpi_nohdl.cc`); only the HDL backdoor is off
+  (`UVM_HDL_NO_DPI`, KI-2).
 - Covergroups require `with function sample(...)` style; array bins are
   aggregated in `coverage.dat` (KI-3).
 - Pass/fail is enforced by `scripts/run_verilator.sh` grepping the UVM
