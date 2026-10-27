@@ -16,12 +16,17 @@ module tb_top;
   // Clock / reset
   // ---------------------------------------------------------------------------
   logic clk = 1'b0;
-  logic rst_n = 1'b0;
+  // rst_n starts as X, not with a declaration initializer: an initializer is
+  // applied before time 0 and raises no event (IEEE 1800 6.8), so the DUT's
+  // async resets would never see a negedge and its flops would stay X until
+  // the first clock edge. The X->0 transition at #1 is a negedge (9.4.2),
+  // after time-0 process start-up and before the first posedge clk.
+  logic rst_n;
 
   always #5ns clk = ~clk;   // 100 MHz
 
   initial begin
-    rst_n = 1'b0;
+    #1ns rst_n = 1'b0;
     repeat (5) @(posedge clk);
     rst_n = 1'b1;
   end
